@@ -5,27 +5,22 @@ import pyaudio
 import numpy as np
 import rumps
 from pynput import keyboard
-from whisper import load_model
 import platform
 
+from whispercpp import Whisper
+
 class SpeechTranscriber:
-    def __init__(self, model):
-        self.model = model
+    def __init__(self, whisper: Whisper):
+        self.whisper = whisper
         self.pykeyboard = keyboard.Controller()
 
     def transcribe(self, audio_data, language=None):
-        result = self.model.transcribe(audio_data, language=language)
-        is_first = True
-        for element in result["text"]:
-            if is_first and element == " ":
-                is_first = False
-                continue
-
-            try:
-                self.pykeyboard.type(element)
-                time.sleep(0.0025)
-            except:
-                pass
+        result = self.whisper.transcribe(audio_data)
+        try:
+            self.pykeyboard.type(result)
+            time.sleep(0.0025)
+        except:
+            pass
 
 class Recorder:
     def __init__(self, transcriber):
@@ -208,14 +203,10 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    print("Loading model...")
-    model_name = args.model_name
-    model = load_model(model_name)
-    print(f"{model_name} model loaded")
-    
-    transcriber = SpeechTranscriber(model)
+    w = Whisper.from_pretrained("base.en")
+    transcriber = SpeechTranscriber(w)
     recorder = Recorder(transcriber)
-    
+
     app = StatusBarApp(recorder, args.language, args.max_time)
     key_listener = GlobalKeyListener(app, args.key_combination)
     listener = keyboard.Listener(on_press=key_listener.on_key_press, on_release=key_listener.on_key_release)
@@ -223,4 +214,3 @@ if __name__ == "__main__":
 
     print("Running... ")
     app.run()
-
