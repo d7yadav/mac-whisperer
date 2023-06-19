@@ -1,5 +1,7 @@
 # Multilingual Dictation App based on OpenAI Whisper
-Multilingual dictation app based on the powerful OpenAI Whisper ASR model(s) to provide accurate and efficient speech-to-text conversion in any application. The app runs in the background and is triggered through a keyboard shortcut. It is also entirely offline, so no data will be shared. It allows users to set up their own keyboard combinations and choose from different Whisper models, and languages.
+Fork of foges/whisper-dictation that uses whispercpp for better performance on M1 Macs. Right now, it's using the `base-en` model by default. Message me if you have trouble setting it up - I broke my wrist recently so this has been clutch for me.
+
+TODO: Get coreML working for a ~3X speed boost.
 
 ## Prerequisites
 The PortAudio library is required for this app to work. You can install it on macOS using the following command:
@@ -15,8 +17,8 @@ The app requires accessibility permissions to register global hotkeys and permis
 Clone the repository:
 
 ```bash
-git clone https://github.com/foges/whisper-dictation.git
-cd whisper-dictation
+git clone https://github.com/jeffzwang/mac-whisper
+cd mac-whisper
 ```
 
 Create a virtual environment:
