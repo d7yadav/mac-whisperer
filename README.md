@@ -1,10 +1,19 @@
-# Multilingual Dictation App based on OpenAI Whisper
-Fork of foges/whisper-dictation that uses whispercpp for better performance on M1 Macs. Right now, it's using the `base-en` model by default. Message me if you have trouble setting it up - I broke my wrist recently so this has been clutch for me.
+## How to use
+```bash
+brew install portaudio
+git clone https://github.com/jeffzwang/mac-whisper
+cd mac-whisper
+pip install -r requirements.txt
+python whisper-dictation.py
+```
 
-TODO: Get coreML working for a ~3X speed boost.
+On Mac, press cmd+opt to start/stop recording.
+
+## What is it?
+Fork of foges/whisper-dictation that 1) uses whispercpp for better performance on M1 Macs 2) has more ergonomic start/stop abilities. Right now, it's using the `base.en` model by default. File an issue if you have trouble setting it up - I broke my wrist recently so this has been clutch for me.
 
 ## Prerequisites
-The PortAudio library is required for this app to work. You can install it on macOS using the following command:
+The PortAudio library is required for this app to work.
 
 ```bash
 brew install portaudio
@@ -13,37 +22,8 @@ brew install portaudio
 ## Permissions
 The app requires accessibility permissions to register global hotkeys and permission to access your microphone for speech recognition.
 
-## Installation
-Clone the repository:
-
-```bash
-git clone https://github.com/jeffzwang/mac-whisper
-cd mac-whisper
-```
-
-Create a virtual environment:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-Install the required packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-Run the application:
-
-```bash
-python whisper-dictation.py
-```
-
-By default, the app uses the "base" Whisper ASR model and the key combination to toggle dictation is cmd+option on macOS and ctrl+alt on other platforms. You can change the model and the key combination using command-line arguments.  Note that models other than `tiny` and `base` can be slow to transcribe and are not recommended unless you're using a powerful computer, ideally one with a CUDA-enabled GPU. For example:
-
-
+## Arguments
+Can specify model and shortcut like below:
 ```bash
 python whisper-dictation.py -m large -k cmd_r+shift -l en
 ```
