@@ -1,7 +1,10 @@
+# Mac Whisperer
+Local Mac speech-to-keyboard that uses the highly performance Whisper models from OpenAI. 
+
 ## How to use
 ```bash
 brew install portaudio
-git clone https://github.com/jeffzwang/mac-whisper
+git clone https://github.com/jeffzwang/mac-whisperer
 cd mac-whisper
 pip install -r requirements.txt
 python whisper-dictation.py
