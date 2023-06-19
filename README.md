@@ -1,5 +1,5 @@
 # Mac Whisperer
-Local Mac speech-to-keyboard that uses the highly performance Whisper models from OpenAI. 
+High performance local Mac speech-to-keyboard that uses the highly performance Whisper models from OpenAI. 15 seconds of audio in 1 second!
 
 ## How to use
 ```bash
