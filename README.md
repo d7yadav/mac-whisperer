@@ -1,5 +1,5 @@
 # Mac Whisperer
-High performance local Mac speech-to-keyboard that uses the highly performance Whisper models from OpenAI. 15 seconds of audio in 1 second! Just press cmd+opt to start/stop recording.
+High performance local Mac speech-to-keyboard app that uses the highly performance Whisper models from OpenAI. 15 seconds of audio in 1 second! Just press cmd+opt to start/stop recording.
 
 ## How to use
 ```bash
