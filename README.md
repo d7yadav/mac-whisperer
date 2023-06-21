@@ -13,7 +13,7 @@ python whisper-dictation.py
 On Mac, press cmd+opt to start/stop recording.
 
 ## What is it?
-Fork of foges/whisper-dictation that 1) uses whispercpp for better performance on M1 Macs (about 2x) 2) has more ergonomic start/stop abilities. Right now, it's using the `base.en` model by default. File an issue if you have trouble setting it up - I broke my wrist recently so this has been clutch for me.
+Fork of [foges/whisper-dictation](https://github.com/foges/whisper-dictation) that 1) uses whispercpp for better performance on M1 Macs (about 2x) 2) has more ergonomic start/stop abilities. Right now, it's using the `base.en` model by default. File an issue if you have trouble setting it up - I broke my wrist recently so this has been clutch for me.
 
 ## Prerequisites
 The PortAudio library is required for this app to work.
