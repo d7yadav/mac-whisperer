@@ -27,7 +27,15 @@ class SettingsManager:
             'model_name': 'small.en',
             'tone_preference': 'auto',  # 'auto', 'casual', 'professional', 'technical'
             'max_recording_time': 600,
-            'ollama_api_url': 'http://localhost:11434/api/generate'  # Ollama API endpoint
+            'ollama_api_url': 'http://localhost:11434/api/generate',  # Ollama API endpoint
+            # Overlay settings
+            'overlay_enabled': True,
+            'overlay_position': 'bottom-right',  # 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'
+            'overlay_opacity': 0.95,
+            'overlay_show_timer': True,
+            'overlay_show_text_preview': True,
+            'overlay_auto_hide_delay': 3.0,
+            'overlay_font_size': 14
         }
 
         if not self.config_file.exists():

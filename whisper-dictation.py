@@ -11,6 +11,7 @@ import subprocess
 from whispercpp import Whisper
 from text_processor import process_text
 from settings_manager import SettingsManager, get_app_context
+import overlay
 
 class SpeechTranscriber:
     def __init__(self, whisper: Whisper, use_clipboard=False, settings=None):
@@ -24,34 +25,52 @@ class SpeechTranscriber:
         self.use_clipboard = use_clipboard
 
     def transcribe(self, audio_data, language=None, app_context=None):
-        # Get raw transcription from Whisper
-        raw_result = self.whisper.transcribe(audio_data)
-
-        # Read use_llm setting from settings manager
-        use_llm = self.settings.get('use_llm', True)
-
-        # Process text with LLM for better formatting (with app context)
-        formatted_result = process_text(raw_result, use_llm=use_llm, context=app_context)
-
-        # ALWAYS copy to clipboard first as a safety net (prevents text loss)
         try:
-            self._copy_to_clipboard(formatted_result)
-        except Exception as e:
-            print(f"Warning: Failed to copy to clipboard: {e}")
+            # Show transcribing overlay
+            overlay.show_transcribing()
 
-        # If not in clipboard-only mode, also try to auto-type
-        if not self.use_clipboard:
+            # Get raw transcription from Whisper
+            raw_result = self.whisper.transcribe(audio_data)
+
+            # Read use_llm setting from settings manager
+            use_llm = self.settings.get('use_llm', True)
+
+            # Show processing overlay if using LLM
+            if use_llm:
+                overlay.show_processing()
+
+            # Process text with LLM for better formatting (with app context)
+            formatted_result = process_text(raw_result, use_llm=use_llm, context=app_context)
+
+            # ALWAYS copy to clipboard first as a safety net (prevents text loss)
             try:
-                self.pykeyboard.type(formatted_result)
-                time.sleep(0.0025)
-                print("✓ Text typed and saved to clipboard")
-            except Exception as type_error:
-                print(f"✗ Typing failed: {type_error}")
-                print("✓ Text saved to clipboard - paste with Cmd+V")
-        else:
-            print("✓ Text copied to clipboard (clipboard mode)")
+                self._copy_to_clipboard(formatted_result)
+            except Exception as e:
+                print(f"Warning: Failed to copy to clipboard: {e}")
+                overlay.show_error(f"Clipboard error: {str(e)[:50]}")
+                return formatted_result
 
-        return formatted_result
+            # If not in clipboard-only mode, also try to auto-type
+            if not self.use_clipboard:
+                try:
+                    self.pykeyboard.type(formatted_result)
+                    time.sleep(0.0025)
+                    print("✓ Text typed and saved to clipboard")
+                except Exception as type_error:
+                    print(f"✗ Typing failed: {type_error}")
+                    print("✓ Text saved to clipboard - paste with Cmd+V")
+            else:
+                print("✓ Text copied to clipboard (clipboard mode)")
+
+            # Show completion overlay with text preview
+            overlay.show_complete(formatted_result)
+
+            return formatted_result
+
+        except Exception as e:
+            print(f"Error during transcription: {e}")
+            overlay.show_error(f"Transcription error: {str(e)[:50]}")
+            return ""
 
     def _copy_to_clipboard(self, text):
         """Helper method to copy text to clipboard"""
@@ -160,6 +179,35 @@ class StatusBarApp(rumps.App):
                (current_tone == 'technical' and 'Technical' in item.title):
                 item.state = True
 
+        # Build overlay settings submenu
+        overlay_position_menu = [
+            rumps.MenuItem('Top Left', callback=lambda s: self.set_overlay_position('top-left', s)),
+            rumps.MenuItem('Top Right', callback=lambda s: self.set_overlay_position('top-right', s)),
+            rumps.MenuItem('Bottom Left', callback=lambda s: self.set_overlay_position('bottom-left', s)),
+            rumps.MenuItem('Bottom Right', callback=lambda s: self.set_overlay_position('bottom-right', s)),
+            rumps.MenuItem('Center', callback=lambda s: self.set_overlay_position('center', s)),
+        ]
+        current_position = self.settings.get('overlay_position', 'bottom-right')
+        for item in overlay_position_menu:
+            if current_position == 'top-left' and 'Top Left' in item.title:
+                item.state = True
+            elif current_position == 'top-right' and 'Top Right' in item.title:
+                item.state = True
+            elif current_position == 'bottom-left' and 'Bottom Left' in item.title:
+                item.state = True
+            elif current_position == 'bottom-right' and 'Bottom Right' in item.title:
+                item.state = True
+            elif current_position == 'center' and 'Center' in item.title:
+                item.state = True
+
+        overlay_menu = [
+            rumps.MenuItem('Enable Overlay', callback=self.toggle_overlay),
+            None,
+            ('Position', overlay_position_menu),
+            rumps.MenuItem('Show Timer', callback=self.toggle_overlay_timer),
+            rumps.MenuItem('Show Text Preview', callback=self.toggle_overlay_text_preview),
+        ]
+
         menu = [
             'Start Recording',
             'Stop Recording',
@@ -168,6 +216,8 @@ class StatusBarApp(rumps.App):
             None,
             ('Tone Preference', tone_menu),
             rumps.MenuItem('Toggle LLM Processing', callback=self.toggle_llm),
+            None,
+            ('Overlay Settings', overlay_menu),
             None,
         ]
 
@@ -183,6 +233,16 @@ class StatusBarApp(rumps.App):
         # Set initial LLM toggle state
         use_llm = self.settings.get('use_llm', True)
         self.menu['Toggle LLM Processing'].state = use_llm
+
+        # Set initial overlay states
+        overlay_enabled = self.settings.get('overlay_enabled', True)
+        self.menu['Overlay Settings']['Enable Overlay'].state = overlay_enabled
+
+        show_timer = self.settings.get('overlay_show_timer', True)
+        self.menu['Overlay Settings']['Show Timer'].state = show_timer
+
+        show_text_preview = self.settings.get('overlay_show_text_preview', True)
+        self.menu['Overlay Settings']['Show Text Preview'].state = show_text_preview
 
         self.started = False
         self.recorder = recorder
@@ -232,6 +292,52 @@ class StatusBarApp(rumps.App):
         sender.state = True
         print(f"Tone preference: {tone}")
 
+    def toggle_overlay(self, sender):
+        """Toggle overlay on/off"""
+        current = self.settings.get('overlay_enabled', True)
+        new_value = not current
+        self.settings.set('overlay_enabled', new_value)
+        sender.state = new_value
+        # Reinitialize overlay
+        overlay_instance = overlay.get_overlay(self.settings)
+        overlay_instance.enabled = new_value
+        print(f"Overlay: {'Enabled' if new_value else 'Disabled'}")
+
+    def toggle_overlay_timer(self, sender):
+        """Toggle overlay timer display"""
+        current = self.settings.get('overlay_show_timer', True)
+        new_value = not current
+        self.settings.set('overlay_show_timer', new_value)
+        sender.state = new_value
+        # Update overlay settings
+        overlay_instance = overlay.get_overlay(self.settings)
+        overlay_instance.show_timer = new_value
+        print(f"Overlay timer: {'Shown' if new_value else 'Hidden'}")
+
+    def toggle_overlay_text_preview(self, sender):
+        """Toggle overlay text preview"""
+        current = self.settings.get('overlay_show_text_preview', True)
+        new_value = not current
+        self.settings.set('overlay_show_text_preview', new_value)
+        sender.state = new_value
+        # Update overlay settings
+        overlay_instance = overlay.get_overlay(self.settings)
+        overlay_instance.show_text_preview = new_value
+        print(f"Overlay text preview: {'Shown' if new_value else 'Hidden'}")
+
+    def set_overlay_position(self, position, sender):
+        """Set overlay position"""
+        self.settings.set('overlay_position', position)
+        # Update checkmarks in menu
+        for item in self.menu['Overlay Settings']['Position'].values():
+            item.state = False
+        sender.state = True
+        # Update overlay settings
+        overlay_instance = overlay.get_overlay(self.settings)
+        overlay_instance.position = position
+        overlay_instance._position_window()
+        print(f"Overlay position: {position}")
+
     def change_language(self, sender):
         self.current_language = sender.title
         for lang in self.languages:
@@ -262,6 +368,10 @@ class StatusBarApp(rumps.App):
         self.started = True
         self.menu['Start Recording'].set_callback(None)
         self.menu['Stop Recording'].set_callback(self.stop_app)
+
+        # Show recording overlay
+        overlay.show_recording()
+
         self.recorder.start(self.current_language, app_context)
 
         if self.max_time is not None:
@@ -356,6 +466,9 @@ if __name__ == "__main__":
     # Initialize settings manager (shared across components)
     settings = SettingsManager()
 
+    # Initialize overlay with settings
+    overlay_instance = overlay.get_overlay(settings)
+
     w = Whisper.from_pretrained(args.model_name)
     transcriber = SpeechTranscriber(w, settings=settings)
     recorder = Recorder(transcriber)
@@ -366,4 +479,6 @@ if __name__ == "__main__":
     listener.start()
 
     print("Running... ")
+    print(f"Overlay: {'Enabled' if settings.get('overlay_enabled', True) else 'Disabled'}")
+    print(f"Position: {settings.get('overlay_position', 'bottom-right')}")
     app.run()
