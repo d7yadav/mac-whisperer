@@ -61,8 +61,8 @@ class NativeOverlay(NSObject):
         self.settings = settings if settings else {}
         self.load_settings()
 
-        if self.enabled:
-            self.create_panel()
+        # Don't create panel yet - delay until first use to avoid conflicts with rumps
+        # Panel will be created lazily when first show method is called
 
         return self
 
@@ -168,6 +168,18 @@ class NativeOverlay(NSObject):
 
         self.ready = True
 
+    def _ensure_panel_created(self):
+        """Lazy panel creation - only create when first needed"""
+        if not self.enabled:
+            return False
+
+        if self.panel is not None and self.ready:
+            return True
+
+        # Create panel on first use
+        self.create_panel()
+        return self.ready
+
     def position_panel(self):
         """Position the panel based on settings"""
         if not self.panel:
@@ -206,7 +218,7 @@ class NativeOverlay(NSObject):
 
     def show_recording(self):
         """Show recording state"""
-        if not self.enabled or not self.panel or not self.ready:
+        if not self._ensure_panel_created():
             return
 
         def update():
@@ -259,7 +271,7 @@ class NativeOverlay(NSObject):
 
     def show_transcribing(self):
         """Show transcribing state"""
-        if not self.enabled or not self.panel or not self.ready:
+        if not self._ensure_panel_created():
             return
 
         if self.timer:
@@ -284,7 +296,7 @@ class NativeOverlay(NSObject):
 
     def show_processing(self):
         """Show processing state (LLM formatting)"""
-        if not self.enabled or not self.panel or not self.ready:
+        if not self._ensure_panel_created():
             return
 
         self.state = OverlayState.PROCESSING
@@ -300,7 +312,7 @@ class NativeOverlay(NSObject):
 
     def show_complete(self, text=None):
         """Show completion state with optional text preview"""
-        if not self.enabled or not self.panel or not self.ready:
+        if not self._ensure_panel_created():
             return
 
         self.state = OverlayState.COMPLETE
@@ -325,7 +337,7 @@ class NativeOverlay(NSObject):
 
     def show_error(self, message='Error occurred'):
         """Show error state"""
-        if not self.enabled or not self.panel or not self.ready:
+        if not self._ensure_panel_created():
             return
 
         if self.timer:
@@ -354,7 +366,7 @@ class NativeOverlay(NSObject):
 
     def hide(self):
         """Hide the overlay"""
-        if not self.panel or not self.ready:
+        if not self.panel:
             return
 
         self.state = OverlayState.HIDDEN
