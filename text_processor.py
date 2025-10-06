@@ -23,45 +23,44 @@ def process_with_llm(text, context=None):
     tone = context.get('tone', 'neutral and professional') if context else 'neutral and professional'
     app_name = context.get('app_name', 'Unknown') if context else 'Unknown'
 
-    # Enhanced prompt focusing on grammar correction and rephrasing (inspired by modern STT services)
-    prompt = f"""You are an expert text editing assistant that transforms speech-to-text output into grammatically correct, naturally flowing text.
+    # Conservative prompt focusing on grammar correction while preserving original meaning
+    prompt = f"""You are an expert text editing assistant that corrects speech-to-text errors while strictly preserving the original meaning and intent.
 
 Context: User is dictating in {app_name}. Use a tone that is {tone}.
 
-Your task: REPHRASE and CORRECT the transcribed speech to create polished, grammatically correct text by:
+Your task: CORRECT grammatical errors and clean up the transcribed speech while maintaining the exact meaning by:
 
-1. **Grammar Correction**: Fix all grammatical errors including:
+1. **Grammar Correction**: Fix grammatical errors while keeping the original sentence structure:
    - Subject-verb agreement (e.g., "he go" → "he goes")
    - Tense consistency (maintain proper past/present/future)
    - Pronoun agreement
    - Article usage (add missing "a", "an", "the")
    - Preposition correction
 
-2. **Sentence Rephrasing**: Restructure awkward or unclear sentences for better readability and natural flow
+2. **Punctuation & Capitalization**: Add proper punctuation marks and capitalize correctly (sentences, proper nouns, I)
 
-3. **Punctuation & Capitalization**: Add proper punctuation marks and capitalize correctly (sentences, proper nouns, I)
-
-4. **Homophone Correction**: Fix commonly confused words based on context:
+3. **Homophone Correction**: Fix commonly confused words based on context:
    - their/there/they're, to/too/two, your/you're, its/it's, affect/effect, than/then
 
-5. **Filler Word Removal**: Delete verbal fillers (um, uh, like, you know, basically, actually, literally)
+4. **Filler Word Removal**: Delete verbal fillers (um, uh, like, you know, basically, actually, literally)
 
-6. **Self-Correction Handling**: When speaker corrects themselves, keep only the final version
+5. **Self-Correction Handling**: When speaker corrects themselves, keep only the final version
    - Look for: "no wait", "actually", "I mean", "scratch that", "or rather", "let me rephrase"
 
-7. **Number & Format Consistency**: Handle numbers, times, and emails appropriately
+6. **Number & Format Consistency**: Handle numbers, times, and emails appropriately
 
 CRITICAL RULES:
 - Output ONLY the corrected text with NO explanations, notes, or commentary
-- REPHRASE for clarity and correctness, don't just clean up
-- Preserve the original meaning and intent
+- DO NOT rephrase or restructure sentences - only fix grammar errors
+- PRESERVE the original sentence structure and word choice unless grammatically incorrect
+- NEVER change the meaning or intent of what was spoken
 - Don't add information that wasn't spoken
-- Make it sound natural, as if written by a fluent speaker
+- Minimal changes - only fix errors, don't rewrite
 
-Examples demonstrating grammar correction and rephrasing:
+Examples demonstrating conservative grammar correction (preserving original structure):
 
 Input: "um so i was thinking like we should probably schedule the meeting for um thursday at 2 pm you know"
-Output: "I was thinking we should schedule the meeting for Thursday at 2 PM."
+Output: "So I was thinking we should probably schedule the meeting for Thursday at 2 PM."
 
 Input: "him and me was going to the store but then we decide to go tomorrow instead"
 Output: "He and I were going to the store, but then we decided to go tomorrow instead."
@@ -84,10 +83,10 @@ Output: "He doesn't know what he's doing, and I think we should help him."
 Input: "between you and i this is more better then the last one"
 Output: "Between you and me, this is better than the last one."
 
-Input: "can you effect the changes by tomorrow i need it real quick"
-Output: "Can you make the changes by tomorrow? I need them quickly."
+Input: "can you please send me the document i need it for the meeting"
+Output: "Can you please send me the document? I need it for the meeting."
 
-Now correct and rephrase this text:
+Now correct this text (fix grammar only, preserve original structure and meaning):
 
 Input: "{text}"
 Output:"""
@@ -105,10 +104,10 @@ Output:"""
                 'prompt': prompt,
                 'stream': False,
                 'options': {
-                    'temperature': 0.2,  # Even lower for more consistent formatting
-                    'top_p': 0.85,
-                    'top_k': 40,
-                    'repeat_penalty': 1.1,
+                    'temperature': 0.1,  # Very low for minimal creative changes, preserves original text
+                    'top_p': 0.8,  # Lower for more deterministic output
+                    'top_k': 30,  # Lower to reduce variation
+                    'repeat_penalty': 1.05,  # Lower to avoid over-correcting
                 }
             },
             timeout=30  # 30 second timeout
