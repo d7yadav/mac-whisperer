@@ -1,13 +1,20 @@
 """
-Modern Visual Overlay for Mac Whisperer
-Provides real-time feedback during recording, transcription, and processing
-Inspired by Wispr Flow's clean, unobtrusive design
+Native macOS Overlay for Mac Whisperer
+Uses PyObjC with NSPanel for non-intrusive, HUD-style feedback
+Compatible with rumps - no threading conflicts
 """
-import tkinter as tk
-from tkinter import font
-import threading
 import time
+import threading
 from enum import Enum
+import objc
+from Foundation import NSObject, NSTimer, NSRunLoop, NSDefaultRunLoopMode
+from AppKit import (
+    NSPanel, NSView, NSTextField, NSColor, NSFont, NSScreen,
+    NSBorderlessWindowMask, NSNonactivatingPanelMask,
+    NSFloatingWindowLevel, NSBackingStoreBuffered,
+    NSMakeRect, NSMakePoint, NSMakeSize,
+    NSApplication, NSCenterTextAlignment
+)
 
 
 class OverlayState(Enum):
@@ -19,41 +26,49 @@ class OverlayState(Enum):
     ERROR = "error"
 
 
-class ModernOverlay:
+class NativeOverlay(NSObject):
     """
-    A modern, semi-transparent overlay that provides visual feedback
-    during speech-to-text operations.
-    Runs in a separate thread to avoid conflicts with rumps event loop.
+    Native macOS overlay using NSPanel
+    - Non-activating (doesn't steal focus)
+    - Always on top (NSFloatingWindowLevel)
+    - HUD-style design
+    - Thread-safe updates
     """
 
-    def __init__(self, settings=None):
-        self.settings = settings
-        self.window = None
+    def init(self):
+        self = objc.super(NativeOverlay, self).init()
+        if self is None:
+            return None
+
+        self.panel = None
+        self.icon_label = None
+        self.status_label = None
+        self.detail_label = None
+        self.preview_label = None
         self.state = OverlayState.HIDDEN
         self.start_time = None
-        self.timer_thread = None
-        self.stop_timer = False
-        self.tk_thread = None
+        self.timer = None
+        self.settings = {}
         self.ready = False
 
-        # Load settings
-        self._load_settings()
+        return self
 
-        # Start Tkinter in a separate thread
+    def initWithSettings_(self, settings):
+        self = self.init()
+        if self is None:
+            return None
+
+        self.settings = settings if settings else {}
+        self.load_settings()
+
         if self.enabled:
-            self.tk_thread = threading.Thread(target=self._run_tk_loop, daemon=True)
-            self.tk_thread.start()
+            self.create_panel()
 
-            # Wait for window to be ready
-            max_wait = 50  # 5 seconds max
-            wait_count = 0
-            while not self.ready and wait_count < max_wait:
-                time.sleep(0.1)
-                wait_count += 1
+        return self
 
-    def _load_settings(self):
-        """Load overlay settings from settings manager"""
-        if self.settings:
+    def load_settings(self):
+        """Load settings from settings manager"""
+        if hasattr(self.settings, 'get'):
             self.enabled = self.settings.get('overlay_enabled', True)
             self.position = self.settings.get('overlay_position', 'bottom-right')
             self.opacity = self.settings.get('overlay_opacity', 0.95)
@@ -71,265 +86,266 @@ class ModernOverlay:
             self.auto_hide_delay = 3.0
             self.font_size = 14
 
-    def _run_tk_loop(self):
-        """Run Tkinter mainloop in separate thread"""
-        self._init_window()
-        if self.window:
-            self.ready = True
-            self.window.mainloop()
+    def create_panel(self):
+        """Create the NSPanel overlay window"""
+        # Panel dimensions
+        width = 300
+        height = 100
 
-    def _init_window(self):
-        """Initialize the overlay window (runs in Tk thread)"""
-        if not self.enabled:
-            return
+        # Create borderless, non-activating panel
+        style_mask = NSBorderlessWindowMask | NSNonactivatingPanelMask
 
-        self.window = tk.Tk()
-        self.window.withdraw()  # Start hidden
-
-        # Window configuration
-        self.window.overrideredirect(True)  # Remove window decorations
-        self.window.attributes('-topmost', True)  # Always on top
-        self.window.attributes('-alpha', self.opacity)  # Transparency
-
-        # Try to make it appear above all windows (macOS specific)
-        try:
-            self.window.attributes('-transparentcolor', 'systemTransparent')
-        except:
-            pass
-
-        # Main container with modern styling
-        self.container = tk.Frame(
-            self.window,
-            bg='#1a1a1a',
-            padx=20,
-            pady=15,
-            relief='flat',
-            bd=0
+        self.panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, width, height),
+            style_mask,
+            NSBackingStoreBuffered,
+            False
         )
-        self.container.pack(fill='both', expand=True)
 
-        # Icon label (emoji/symbol)
-        self.icon_font = font.Font(family='San Francisco', size=24, weight='bold')
-        self.icon_label = tk.Label(
-            self.container,
-            text='',
-            font=self.icon_font,
-            bg='#1a1a1a',
-            fg='white'
+        # Panel configuration
+        self.panel.setLevel_(NSFloatingWindowLevel)  # Always on top
+        self.panel.setOpaque_(False)  # Transparent
+        self.panel.setBackgroundColor_(NSColor.clearColor())  # Clear background
+        self.panel.setHasShadow_(True)  # Nice shadow
+        self.panel.setFloatingPanel_(True)  # Float above other windows
+        self.panel.setWorksWhenModal_(True)  # Work in modal contexts
+        self.panel.setAlphaValue_(self.opacity)  # Set opacity
+
+        # Create content view with dark background
+        content_view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+        content_view.setWantsLayer_(True)
+        content_view.layer().setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.1, 0.1, 0.1, 0.95).CGColor()
         )
-        self.icon_label.pack(side='left', padx=(0, 12))
+        content_view.layer().setCornerRadius_(12.0)  # Rounded corners
 
-        # Text container
-        text_container = tk.Frame(self.container, bg='#1a1a1a')
-        text_container.pack(side='left', fill='both', expand=True)
+        # Icon label (emoji)
+        self.icon_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, height - 45, 40, 30))
+        self.icon_label.setStringValue_("")
+        self.icon_label.setFont_(NSFont.systemFontOfSize_(24.0))
+        self.icon_label.setBezeled_(False)
+        self.icon_label.setDrawsBackground_(False)
+        self.icon_label.setEditable_(False)
+        self.icon_label.setSelectable_(False)
+        content_view.addSubview_(self.icon_label)
 
         # Status label
-        self.status_font = font.Font(family='San Francisco', size=self.font_size, weight='bold')
-        self.status_label = tk.Label(
-            text_container,
-            text='',
-            font=self.status_font,
-            bg='#1a1a1a',
-            fg='white',
-            anchor='w'
-        )
-        self.status_label.pack(anchor='w')
+        self.status_label = NSTextField.alloc().initWithFrame_(NSMakeRect(60, height - 40, 220, 20))
+        self.status_label.setStringValue_("")
+        self.status_label.setFont_(NSFont.boldSystemFontOfSize_(float(self.font_size)))
+        self.status_label.setTextColor_(NSColor.whiteColor())
+        self.status_label.setBezeled_(False)
+        self.status_label.setDrawsBackground_(False)
+        self.status_label.setEditable_(False)
+        self.status_label.setSelectable_(False)
+        content_view.addSubview_(self.status_label)
 
-        # Timer/detail label
-        self.detail_font = font.Font(family='San Francisco', size=self.font_size - 2)
-        self.detail_label = tk.Label(
-            text_container,
-            text='',
-            font=self.detail_font,
-            bg='#1a1a1a',
-            fg='#999999',
-            anchor='w'
-        )
-        self.detail_label.pack(anchor='w')
+        # Detail label (timer/info)
+        self.detail_label = NSTextField.alloc().initWithFrame_(NSMakeRect(60, height - 60, 220, 16))
+        self.detail_label.setStringValue_("")
+        self.detail_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 2)))
+        self.detail_label.setTextColor_(NSColor.grayColor())
+        self.detail_label.setBezeled_(False)
+        self.detail_label.setDrawsBackground_(False)
+        self.detail_label.setEditable_(False)
+        self.detail_label.setSelectable_(False)
+        content_view.addSubview_(self.detail_label)
 
-        # Text preview label (shown for COMPLETE state)
-        self.preview_font = font.Font(family='San Francisco', size=self.font_size - 3)
-        self.preview_label = tk.Label(
-            self.container,
-            text='',
-            font=self.preview_font,
-            bg='#1a1a1a',
-            fg='#cccccc',
-            anchor='w',
-            justify='left',
-            wraplength=400
-        )
+        # Preview label (shown for COMPLETE state)
+        self.preview_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, 10, width - 30, 35))
+        self.preview_label.setStringValue_("")
+        self.preview_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 3)))
+        self.preview_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.8, 1.0))
+        self.preview_label.setBezeled_(False)
+        self.preview_label.setDrawsBackground_(False)
+        self.preview_label.setEditable_(False)
+        self.preview_label.setSelectable_(False)
+        self.preview_label.setHidden_(True)
+        content_view.addSubview_(self.preview_label)
 
-        # Position window
-        self._position_window()
+        self.panel.setContentView_(content_view)
+        self.position_panel()
 
-        # Add rounded corners effect (if supported)
-        try:
-            self.window.configure(bg='#1a1a1a')
-        except:
-            pass
+        self.ready = True
 
-    def _position_window(self):
-        """Position the window based on settings"""
-        if not self.window:
+    def position_panel(self):
+        """Position the panel based on settings"""
+        if not self.panel:
             return
 
-        # Update window to get proper size
-        self.window.update_idletasks()
+        screen = NSScreen.mainScreen()
+        screen_frame = screen.visibleFrame()
+        panel_frame = self.panel.frame()
 
-        # Get window size
-        width = self.window.winfo_reqwidth()
-        height = self.window.winfo_reqheight()
-
-        # Get screen size
-        screen_width = self.window.winfo_screenwidth()
-        screen_height = self.window.winfo_screenheight()
-
-        # Calculate position based on preference
         margin = 40
         positions = {
-            'top-left': (margin, margin),
-            'top-right': (screen_width - width - margin, margin),
-            'bottom-left': (margin, screen_height - height - margin - 100),
-            'bottom-right': (screen_width - width - margin, screen_height - height - margin - 100),
-            'center': ((screen_width - width) // 2, (screen_height - height) // 2)
+            'top-left': (
+                screen_frame.origin.x + margin,
+                screen_frame.origin.y + screen_frame.size.height - panel_frame.size.height - margin
+            ),
+            'top-right': (
+                screen_frame.origin.x + screen_frame.size.width - panel_frame.size.width - margin,
+                screen_frame.origin.y + screen_frame.size.height - panel_frame.size.height - margin
+            ),
+            'bottom-left': (
+                screen_frame.origin.x + margin,
+                screen_frame.origin.y + margin + 100
+            ),
+            'bottom-right': (
+                screen_frame.origin.x + screen_frame.size.width - panel_frame.size.width - margin,
+                screen_frame.origin.y + margin + 100
+            ),
+            'center': (
+                screen_frame.origin.x + (screen_frame.size.width - panel_frame.size.width) / 2,
+                screen_frame.origin.y + (screen_frame.size.height - panel_frame.size.height) / 2
+            )
         }
 
         x, y = positions.get(self.position, positions['bottom-right'])
-        self.window.geometry(f'+{x}+{y}')
+        self.panel.setFrameOrigin_(NSMakePoint(x, y))
 
     def show_recording(self):
-        """Show recording state (thread-safe)"""
-        if not self.enabled or not self.window or not self.ready:
+        """Show recording state"""
+        if not self.enabled or not self.panel or not self.ready:
             return
 
-        def _update_ui():
+        def update():
             self.state = OverlayState.RECORDING
             self.start_time = time.time()
 
-            self.icon_label.config(text='🔴', fg='#ff3b30')
-            self.status_label.config(text='Recording', fg='#ff3b30')
-            self.detail_label.config(text='00:00')
-            self.preview_label.pack_forget()
+            self.icon_label.setStringValue_("🔴")
+            self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+            self.status_label.setStringValue_("Recording")
+            self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+            self.detail_label.setStringValue_("00:00")
+            self.detail_label.setHidden_(False)
+            self.preview_label.setHidden_(True)
 
-            self.window.deiconify()
-            self._position_window()
+            self.panel.orderFrontRegardless()
+            self.position_panel()
 
-            # Start timer thread
+            # Start timer updates
             if self.show_timer:
-                self.stop_timer = False
-                self.timer_thread = threading.Thread(target=self._update_timer, daemon=True)
-                self.timer_thread.start()
+                self.start_timer()
 
-        self.window.after(0, _update_ui)
+        self.performSelectorOnMainThread_withObject_waitUntilDone_("_update_recording", None, False)
+        update()
 
-    def _update_timer(self):
-        """Update the timer display during recording (runs in background thread)"""
-        while not self.stop_timer and self.state == OverlayState.RECORDING:
-            elapsed = time.time() - self.start_time
-            minutes = int(elapsed // 60)
-            seconds = int(elapsed % 60)
-            time_text = f'{minutes:02d}:{seconds:02d}'
+    def _update_recording(self, _):
+        """Called on main thread for recording update"""
+        pass
 
-            try:
-                # Schedule UI update on Tkinter thread
-                self.window.after(0, lambda txt=time_text: self.detail_label.config(text=txt))
-            except:
-                break
+    def start_timer(self):
+        """Start timer for recording duration"""
+        if self.timer:
+            self.timer.invalidate()
 
-            time.sleep(0.1)
+        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.1, self, "updateTimer:", None, True
+        )
+
+    def updateTimer_(self, timer):
+        """Update timer display (called every 100ms)"""
+        if self.state != OverlayState.RECORDING or not self.start_time:
+            if self.timer:
+                self.timer.invalidate()
+                self.timer = None
+            return
+
+        elapsed = time.time() - self.start_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        self.detail_label.setStringValue_(f"{minutes:02d}:{seconds:02d}")
 
     def show_transcribing(self):
-        """Show transcribing state (thread-safe)"""
-        if not self.enabled or not self.window or not self.ready:
+        """Show transcribing state"""
+        if not self.enabled or not self.panel or not self.ready:
             return
 
-        def _update_ui():
-            self.state = OverlayState.TRANSCRIBING
-            self.stop_timer = True
+        if self.timer:
+            self.timer.invalidate()
+            self.timer = None
 
-            self.icon_label.config(text='⏳', fg='#ffcc00')
-            self.status_label.config(text='Transcribing', fg='#ffcc00')
+        self.state = OverlayState.TRANSCRIBING
 
-            if self.start_time:
-                elapsed = time.time() - self.start_time
-                self.detail_label.config(text=f'Recorded {elapsed:.1f}s')
-            else:
-                self.detail_label.config(text='Processing audio...')
+        self.icon_label.setStringValue_("⏳")
+        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.8, 0.0, 1.0))
+        self.status_label.setStringValue_("Transcribing")
+        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.8, 0.0, 1.0))
 
-            self._position_window()
+        if self.start_time:
+            elapsed = time.time() - self.start_time
+            self.detail_label.setStringValue_(f"Recorded {elapsed:.1f}s")
+        else:
+            self.detail_label.setStringValue_("Processing audio...")
 
-        self.window.after(0, _update_ui)
+        self.panel.orderFrontRegardless()
+        self.position_panel()
 
     def show_processing(self):
-        """Show processing state - LLM formatting (thread-safe)"""
-        if not self.enabled or not self.window or not self.ready:
+        """Show processing state (LLM formatting)"""
+        if not self.enabled or not self.panel or not self.ready:
             return
 
-        def _update_ui():
-            self.state = OverlayState.PROCESSING
+        self.state = OverlayState.PROCESSING
 
-            self.icon_label.config(text='✨', fg='#5856d6')
-            self.status_label.config(text='Processing', fg='#5856d6')
-            self.detail_label.config(text='Improving grammar...')
+        self.icon_label.setStringValue_("✨")
+        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.35, 0.34, 0.84, 1.0))
+        self.status_label.setStringValue_("Processing")
+        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.35, 0.34, 0.84, 1.0))
+        self.detail_label.setStringValue_("Improving grammar...")
 
-            self._position_window()
-
-        self.window.after(0, _update_ui)
+        self.panel.orderFrontRegardless()
+        self.position_panel()
 
     def show_complete(self, text=None):
-        """Show completion state with optional text preview (thread-safe)"""
-        if not self.enabled or not self.window or not self.ready:
+        """Show completion state with optional text preview"""
+        if not self.enabled or not self.panel or not self.ready:
             return
 
-        def _update_ui():
-            self.state = OverlayState.COMPLETE
+        self.state = OverlayState.COMPLETE
 
-            self.icon_label.config(text='✓', fg='#34c759')
-            self.status_label.config(text='Complete', fg='#34c759')
-            self.detail_label.config(text='Text ready!')
+        self.icon_label.setStringValue_("✓")
+        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.20, 0.78, 0.35, 1.0))
+        self.status_label.setStringValue_("Complete")
+        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.20, 0.78, 0.35, 1.0))
+        self.detail_label.setStringValue_("Text ready!")
 
-            # Show text preview if enabled and text provided
-            if self.show_text_preview and text:
-                preview = text[:150] + '...' if len(text) > 150 else text
-                self.preview_label.config(text=preview)
-                self.preview_label.pack(pady=(10, 0))
+        # Show text preview if enabled
+        if self.show_text_preview and text:
+            preview = text[:150] + '...' if len(text) > 150 else text
+            self.preview_label.setStringValue_(preview)
+            self.preview_label.setHidden_(False)
 
-            self._position_window()
+        self.panel.orderFrontRegardless()
+        self.position_panel()
 
-            # Auto-hide after delay
-            threading.Thread(
-                target=self._auto_hide,
-                args=(self.auto_hide_delay,),
-                daemon=True
-            ).start()
-
-        self.window.after(0, _update_ui)
+        # Auto-hide after delay
+        threading.Thread(target=self._auto_hide, args=(self.auto_hide_delay,), daemon=True).start()
 
     def show_error(self, message='Error occurred'):
-        """Show error state (thread-safe)"""
-        if not self.enabled or not self.window or not self.ready:
+        """Show error state"""
+        if not self.enabled or not self.panel or not self.ready:
             return
 
-        def _update_ui():
-            self.state = OverlayState.ERROR
-            self.stop_timer = True
+        if self.timer:
+            self.timer.invalidate()
+            self.timer = None
 
-            self.icon_label.config(text='⚠️', fg='#ff3b30')
-            self.status_label.config(text='Error', fg='#ff3b30')
-            self.detail_label.config(text=message)
-            self.preview_label.pack_forget()
+        self.state = OverlayState.ERROR
 
-            self._position_window()
+        self.icon_label.setStringValue_("⚠️")
+        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        self.status_label.setStringValue_("Error")
+        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        self.detail_label.setStringValue_(message[:50])
+        self.preview_label.setHidden_(True)
 
-            # Auto-hide after delay
-            threading.Thread(
-                target=self._auto_hide,
-                args=(self.auto_hide_delay,),
-                daemon=True
-            ).start()
+        self.panel.orderFrontRegardless()
+        self.position_panel()
 
-        self.window.after(0, _update_ui)
+        # Auto-hide after delay
+        threading.Thread(target=self._auto_hide, args=(self.auto_hide_delay,), daemon=True).start()
 
     def _auto_hide(self, delay):
         """Auto-hide the overlay after a delay"""
@@ -337,29 +353,27 @@ class ModernOverlay:
         self.hide()
 
     def hide(self):
-        """Hide the overlay (thread-safe)"""
-        if not self.window or not self.ready:
+        """Hide the overlay"""
+        if not self.panel or not self.ready:
             return
 
-        def _update_ui():
-            self.state = OverlayState.HIDDEN
-            self.stop_timer = True
+        self.state = OverlayState.HIDDEN
 
-            try:
-                self.window.withdraw()
-            except:
-                pass
+        if self.timer:
+            self.timer.invalidate()
+            self.timer = None
 
-        self.window.after(0, _update_ui)
+        self.panel.orderOut_(None)
 
     def destroy(self):
         """Clean up the overlay"""
-        self.stop_timer = True
-        if self.window:
-            try:
-                self.window.destroy()
-            except:
-                pass
+        if self.timer:
+            self.timer.invalidate()
+            self.timer = None
+
+        if self.panel:
+            self.panel.close()
+            self.panel = None
 
 
 # Global overlay instance
@@ -370,41 +384,48 @@ def get_overlay(settings=None):
     """Get or create the global overlay instance"""
     global _overlay_instance
     if _overlay_instance is None:
-        _overlay_instance = ModernOverlay(settings)
+        _overlay_instance = NativeOverlay.alloc().initWithSettings_(settings)
     return _overlay_instance
 
 
+# Convenience functions
 def show_recording():
-    """Convenience function: Show recording state"""
+    """Show recording state"""
     overlay = get_overlay()
-    overlay.show_recording()
+    if overlay:
+        overlay.show_recording()
 
 
 def show_transcribing():
-    """Convenience function: Show transcribing state"""
+    """Show transcribing state"""
     overlay = get_overlay()
-    overlay.show_transcribing()
+    if overlay:
+        overlay.show_transcribing()
 
 
 def show_processing():
-    """Convenience function: Show processing state"""
+    """Show processing state"""
     overlay = get_overlay()
-    overlay.show_processing()
+    if overlay:
+        overlay.show_processing()
 
 
 def show_complete(text=None):
-    """Convenience function: Show completion state"""
+    """Show completion state"""
     overlay = get_overlay()
-    overlay.show_complete(text)
+    if overlay:
+        overlay.show_complete(text)
 
 
 def show_error(message='Error occurred'):
-    """Convenience function: Show error state"""
+    """Show error state"""
     overlay = get_overlay()
-    overlay.show_error(message)
+    if overlay:
+        overlay.show_error(message)
 
 
 def hide_overlay():
-    """Convenience function: Hide the overlay"""
+    """Hide the overlay"""
     overlay = get_overlay()
-    overlay.hide()
+    if overlay:
+        overlay.hide()
