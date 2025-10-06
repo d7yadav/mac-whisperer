@@ -176,9 +176,17 @@ class NativeOverlay(NSObject):
         if self.panel is not None and self.ready:
             return True
 
-        # Create panel on first use
-        self.create_panel()
+        # Create panel on main thread (required by macOS)
+        # Use performSelectorOnMainThread to ensure thread safety
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "createPanelOnMainThread:", None, True
+        )
         return self.ready
+
+    def createPanelOnMainThread_(self, _):
+        """Called on main thread to create the panel"""
+        if self.panel is None:
+            self.create_panel()
 
     def position_panel(self):
         """Position the panel based on settings"""
@@ -221,31 +229,30 @@ class NativeOverlay(NSObject):
         if not self._ensure_panel_created():
             return
 
-        def update():
-            self.state = OverlayState.RECORDING
-            self.start_time = time.time()
+        # Schedule UI updates on main thread
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "updateRecordingUI:", None, False
+        )
 
-            self.icon_label.setStringValue_("🔴")
-            self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
-            self.status_label.setStringValue_("Recording")
-            self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
-            self.detail_label.setStringValue_("00:00")
-            self.detail_label.setHidden_(False)
-            self.preview_label.setHidden_(True)
-
-            self.panel.orderFrontRegardless()
-            self.position_panel()
-
-            # Start timer updates
-            if self.show_timer:
-                self.start_timer()
-
-        self.performSelectorOnMainThread_withObject_waitUntilDone_("_update_recording", None, False)
-        update()
-
-    def _update_recording(self, _):
+    def updateRecordingUI_(self, _):
         """Called on main thread for recording update"""
-        pass
+        self.state = OverlayState.RECORDING
+        self.start_time = time.time()
+
+        self.icon_label.setStringValue_("🔴")
+        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        self.status_label.setStringValue_("Recording")
+        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        self.detail_label.setStringValue_("00:00")
+        self.detail_label.setHidden_(False)
+        self.preview_label.setHidden_(True)
+
+        self.panel.orderFrontRegardless()
+        self.position_panel()
+
+        # Start timer updates
+        if self.show_timer:
+            self.start_timer()
 
     def start_timer(self):
         """Start timer for recording duration"""
@@ -274,6 +281,12 @@ class NativeOverlay(NSObject):
         if not self._ensure_panel_created():
             return
 
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "updateTranscribingUI:", None, False
+        )
+
+    def updateTranscribingUI_(self, _):
+        """Called on main thread for transcribing update"""
         if self.timer:
             self.timer.invalidate()
             self.timer = None
@@ -299,6 +312,12 @@ class NativeOverlay(NSObject):
         if not self._ensure_panel_created():
             return
 
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "updateProcessingUI:", None, False
+        )
+
+    def updateProcessingUI_(self, _):
+        """Called on main thread for processing update"""
         self.state = OverlayState.PROCESSING
 
         self.icon_label.setStringValue_("✨")
@@ -315,6 +334,14 @@ class NativeOverlay(NSObject):
         if not self._ensure_panel_created():
             return
 
+        # Store text for main thread update
+        self._temp_text = text
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "updateCompleteUI:", None, False
+        )
+
+    def updateCompleteUI_(self, _):
+        """Called on main thread for complete update"""
         self.state = OverlayState.COMPLETE
 
         self.icon_label.setStringValue_("✓")
@@ -324,6 +351,7 @@ class NativeOverlay(NSObject):
         self.detail_label.setStringValue_("Text ready!")
 
         # Show text preview if enabled
+        text = getattr(self, '_temp_text', None)
         if self.show_text_preview and text:
             preview = text[:150] + '...' if len(text) > 150 else text
             self.preview_label.setStringValue_(preview)
@@ -340,12 +368,21 @@ class NativeOverlay(NSObject):
         if not self._ensure_panel_created():
             return
 
+        # Store message for main thread update
+        self._temp_error_message = message
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "updateErrorUI:", None, False
+        )
+
+    def updateErrorUI_(self, _):
+        """Called on main thread for error update"""
         if self.timer:
             self.timer.invalidate()
             self.timer = None
 
         self.state = OverlayState.ERROR
 
+        message = getattr(self, '_temp_error_message', 'Error occurred')
         self.icon_label.setStringValue_("⚠️")
         self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
         self.status_label.setStringValue_("Error")
@@ -369,13 +406,20 @@ class NativeOverlay(NSObject):
         if not self.panel:
             return
 
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "updateHideUI:", None, False
+        )
+
+    def updateHideUI_(self, _):
+        """Called on main thread for hide update"""
         self.state = OverlayState.HIDDEN
 
         if self.timer:
             self.timer.invalidate()
             self.timer = None
 
-        self.panel.orderOut_(None)
+        if self.panel:
+            self.panel.orderOut_(None)
 
     def destroy(self):
         """Clean up the overlay"""
