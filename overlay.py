@@ -15,8 +15,9 @@ from AppKit import (
     NSMakeRect, NSMakePoint, NSMakeSize,
     NSApplication, NSCenterTextAlignment,
     NSVisualEffectView, NSAnimationContext, NSAnimation,
-    NSViewWidthSizable, NSViewHeightSizable
+    NSViewWidthSizable, NSViewHeightSizable, NSBezierPath
 )
+import random
 
 
 class OverlayState(Enum):
@@ -49,6 +50,9 @@ class NativeOverlay(NSObject):
         self.preview_label = None
         self.stats_label = None
         self.visual_effect_view = None
+        self.waveform_container = None
+        self.waveform_bars = []
+        self.waveform_timer = None
         self.state = OverlayState.HIDDEN
         self.start_time = None
         self.timer = None
@@ -204,6 +208,31 @@ class NativeOverlay(NSObject):
         self.stats_label.setHidden_(True)
         content_view.addSubview_(self.stats_label)
 
+        # Waveform visualization container (for recording state)
+        waveform_height = 40
+        waveform_y = 25
+        self.waveform_container = NSView.alloc().initWithFrame_(NSMakeRect(20, waveform_y, width - 40, waveform_height))
+        self.waveform_container.setHidden_(True)
+        self.waveform_container.setWantsLayer_(True)
+        content_view.addSubview_(self.waveform_container)
+
+        # Create waveform bars (modern animated visualization)
+        num_bars = 25
+        bar_width = 3
+        bar_spacing = ((width - 40) - (num_bars * bar_width)) / (num_bars - 1)
+
+        self.waveform_bars = []
+        for i in range(num_bars):
+            x = i * (bar_width + bar_spacing)
+            bar = NSView.alloc().initWithFrame_(NSMakeRect(x, waveform_height / 2, bar_width, 2))
+            bar.setWantsLayer_(True)
+            bar.layer().setBackgroundColor_(
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.27, 0.23, 0.8).CGColor()
+            )
+            bar.layer().setCornerRadius_(1.5)  # Rounded bars
+            self.waveform_container.addSubview_(bar)
+            self.waveform_bars.append(bar)
+
         self.panel.setContentView_(content_view)
         self.position_panel()
 
@@ -332,6 +361,49 @@ class NativeOverlay(NSObject):
             except:
                 pass
 
+    def start_waveform_animation(self):
+        """Start animated waveform visualization"""
+        if self.waveform_timer:
+            return  # Already animating
+
+        self.waveform_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.08, self, "updateWaveform:", None, True
+        )
+
+    def updateWaveform_(self, timer):
+        """Update waveform bars (called every 80ms)"""
+        if self.state != OverlayState.RECORDING or not self.waveform_bars:
+            self.stop_waveform_animation()
+            return
+
+        # Simulate audio levels with random heights
+        waveform_container_height = 40
+        for bar in self.waveform_bars:
+            # Random height between 2 and 35 pixels (simulating audio levels)
+            height = random.uniform(4, 35)
+            frame = bar.frame()
+
+            # Center the bar vertically
+            y = (waveform_container_height - height) / 2
+
+            # Animate height change
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.08)
+            bar.animator().setFrame_(NSMakeRect(frame.origin.x, y, frame.size.width, height))
+            NSAnimationContext.endGrouping()
+
+    def stop_waveform_animation(self):
+        """Stop waveform animation"""
+        if self.waveform_timer:
+            self.waveform_timer.invalidate()
+            self.waveform_timer = None
+
+        # Reset all bars to minimum height
+        if self.waveform_bars:
+            for bar in self.waveform_bars:
+                frame = bar.frame()
+                bar.setFrame_(NSMakeRect(frame.origin.x, 19, frame.size.width, 2))
+
     def show_recording(self):
         """Show recording state"""
         if not self._ensure_panel_created():
@@ -358,6 +430,11 @@ class NativeOverlay(NSObject):
         self.detail_label.setHidden_(False)
         self.preview_label.setHidden_(True)
         self.stats_label.setHidden_(True)
+
+        # Show animated waveform
+        if self.waveform_container:
+            self.waveform_container.setHidden_(False)
+            self.start_waveform_animation()
 
         self.panel.orderFrontRegardless()
         self.position_panel()
@@ -407,6 +484,11 @@ class NativeOverlay(NSObject):
         """Called on main thread for transcribing update"""
         # Stop pulse animation from recording
         self.stop_pulse_animation()
+        self.stop_waveform_animation()
+
+        # Hide waveform
+        if self.waveform_container:
+            self.waveform_container.setHidden_(True)
 
         if self.timer:
             self.timer.invalidate()
@@ -574,6 +656,11 @@ class NativeOverlay(NSObject):
 
         # Stop all animations
         self.stop_pulse_animation()
+        self.stop_waveform_animation()
+
+        # Hide waveform
+        if self.waveform_container:
+            self.waveform_container.setHidden_(True)
 
         if self.timer:
             self.timer.invalidate()
@@ -611,6 +698,7 @@ class NativeOverlay(NSObject):
         """Clean up the overlay"""
         # Stop all animations and timers
         self.stop_pulse_animation()
+        self.stop_waveform_animation()
 
         if self.timer:
             self.timer.invalidate()
