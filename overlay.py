@@ -13,7 +13,9 @@ from AppKit import (
     NSBorderlessWindowMask, NSNonactivatingPanelMask,
     NSFloatingWindowLevel, NSBackingStoreBuffered,
     NSMakeRect, NSMakePoint, NSMakeSize,
-    NSApplication, NSCenterTextAlignment
+    NSApplication, NSCenterTextAlignment,
+    NSVisualEffectView, NSAnimationContext, NSAnimation,
+    NSViewWidthSizable, NSViewHeightSizable
 )
 
 
@@ -45,9 +47,14 @@ class NativeOverlay(NSObject):
         self.status_label = None
         self.detail_label = None
         self.preview_label = None
+        self.stats_label = None
+        self.visual_effect_view = None
         self.state = OverlayState.HIDDEN
         self.start_time = None
         self.timer = None
+        self.pulse_timer = None
+        self.pulse_scale = 1.0
+        self.pulse_direction = 1
         self.settings = {}
         self.ready = False
 
@@ -95,10 +102,10 @@ class NativeOverlay(NSObject):
         self.last_transcript_stats = None
 
     def create_panel(self):
-        """Create the NSPanel overlay window"""
+        """Create the NSPanel overlay window with modern macOS blur effects"""
         # Panel dimensions (increased for stats)
-        width = 300
-        height = 120
+        width = 320
+        height = 130
 
         # Create borderless, non-activating panel
         style_mask = NSBorderlessWindowMask | NSNonactivatingPanelMask
@@ -117,30 +124,44 @@ class NativeOverlay(NSObject):
         self.panel.setHasShadow_(True)  # Nice shadow
         self.panel.setFloatingPanel_(True)  # Float above other windows
         self.panel.setWorksWhenModal_(True)  # Work in modal contexts
-        self.panel.setAlphaValue_(self.opacity)  # Set opacity
+        self.panel.setAlphaValue_(0.0)  # Start invisible for fade-in
 
-        # Create content view with dark background
-        content_view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
-        content_view.setWantsLayer_(True)
-        content_view.layer().setBackgroundColor_(
-            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.1, 0.1, 0.1, 0.95).CGColor()
-        )
-        content_view.layer().setCornerRadius_(12.0)  # Rounded corners
+        # Create visual effect view for modern blur (macOS 10.10+)
+        try:
+            self.visual_effect_view = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+            self.visual_effect_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+            self.visual_effect_view.setWantsLayer_(True)
+            self.visual_effect_view.layer().setCornerRadius_(16.0)  # More rounded
+            # Material: 2 = Dark, 8 = HUD (try both)
+            try:
+                self.visual_effect_view.setMaterial_(2)  # Dark material
+            except:
+                pass
+            content_view = self.visual_effect_view
+        except:
+            # Fallback to standard view if NSVisualEffectView unavailable
+            content_view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+            content_view.setWantsLayer_(True)
+            content_view.layer().setBackgroundColor_(
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(0.08, 0.08, 0.08, 0.96).CGColor()
+            )
+            content_view.layer().setCornerRadius_(16.0)  # More rounded
 
-        # Icon label (emoji)
-        self.icon_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, height - 45, 40, 30))
+        # Icon label (larger, more prominent)
+        self.icon_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, height - 50, 45, 35))
         self.icon_label.setStringValue_("")
-        self.icon_label.setFont_(NSFont.systemFontOfSize_(24.0))
+        self.icon_label.setFont_(NSFont.systemFontOfSize_(28.0))  # Larger icon
         self.icon_label.setBezeled_(False)
         self.icon_label.setDrawsBackground_(False)
         self.icon_label.setEditable_(False)
         self.icon_label.setSelectable_(False)
+        self.icon_label.setWantsLayer_(True)  # For animations
         content_view.addSubview_(self.icon_label)
 
-        # Status label
-        self.status_label = NSTextField.alloc().initWithFrame_(NSMakeRect(60, height - 40, 220, 20))
+        # Status label (better positioning)
+        self.status_label = NSTextField.alloc().initWithFrame_(NSMakeRect(70, height - 42, 230, 22))
         self.status_label.setStringValue_("")
-        self.status_label.setFont_(NSFont.boldSystemFontOfSize_(float(self.font_size)))
+        self.status_label.setFont_(NSFont.boldSystemFontOfSize_(float(self.font_size + 1)))  # Slightly larger
         self.status_label.setTextColor_(NSColor.whiteColor())
         self.status_label.setBezeled_(False)
         self.status_label.setDrawsBackground_(False)
@@ -148,11 +169,11 @@ class NativeOverlay(NSObject):
         self.status_label.setSelectable_(False)
         content_view.addSubview_(self.status_label)
 
-        # Detail label (timer/info)
-        self.detail_label = NSTextField.alloc().initWithFrame_(NSMakeRect(60, height - 60, 220, 16))
+        # Detail label (timer/info) with better spacing
+        self.detail_label = NSTextField.alloc().initWithFrame_(NSMakeRect(70, height - 62, 230, 16))
         self.detail_label.setStringValue_("")
-        self.detail_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 2)))
-        self.detail_label.setTextColor_(NSColor.grayColor())
+        self.detail_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 1)))
+        self.detail_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.7, 1.0))  # Softer gray
         self.detail_label.setBezeled_(False)
         self.detail_label.setDrawsBackground_(False)
         self.detail_label.setEditable_(False)
@@ -244,6 +265,73 @@ class NativeOverlay(NSObject):
         x, y = positions.get(self.position, positions['bottom-right'])
         self.panel.setFrameOrigin_(NSMakePoint(x, y))
 
+    def fade_in(self):
+        """Smooth fade-in animation"""
+        if not self.panel:
+            return
+
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.currentContext().setDuration_(0.3)  # 0.3s fade
+        self.panel.animator().setAlphaValue_(self.opacity)
+        NSAnimationContext.endGrouping()
+
+    def fade_out(self):
+        """Smooth fade-out animation"""
+        if not self.panel:
+            return
+
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.currentContext().setDuration_(0.3)  # 0.3s fade
+        self.panel.animator().setAlphaValue_(0.0)
+        NSAnimationContext.endGrouping()
+
+    def start_pulse_animation(self):
+        """Start pulsing animation for recording state"""
+        if self.pulse_timer:
+            return  # Already pulsing
+
+        self.pulse_scale = 1.0
+        self.pulse_direction = 1
+        self.pulse_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.05, self, "updatePulse:", None, True
+        )
+
+    def updatePulse_(self, timer):
+        """Update pulsing animation (called every 50ms)"""
+        if self.state != OverlayState.RECORDING or not self.icon_label:
+            self.stop_pulse_animation()
+            return
+
+        # Pulse between 0.9 and 1.1 scale
+        self.pulse_scale += self.pulse_direction * 0.02
+        if self.pulse_scale >= 1.15:
+            self.pulse_direction = -1
+        elif self.pulse_scale <= 0.90:
+            self.pulse_direction = 1
+
+        # Apply transform
+        try:
+            from Quartz import CGAffineTransformMakeScale
+            transform = CGAffineTransformMakeScale(self.pulse_scale, self.pulse_scale)
+            self.icon_label.layer().setAffineTransform_(transform)
+        except:
+            pass  # Fallback if Quartz not available
+
+    def stop_pulse_animation(self):
+        """Stop pulsing animation"""
+        if self.pulse_timer:
+            self.pulse_timer.invalidate()
+            self.pulse_timer = None
+
+        # Reset scale
+        if self.icon_label:
+            try:
+                from Quartz import CGAffineTransformMakeScale
+                transform = CGAffineTransformMakeScale(1.0, 1.0)
+                self.icon_label.layer().setAffineTransform_(transform)
+            except:
+                pass
+
     def show_recording(self):
         """Show recording state"""
         if not self._ensure_panel_created():
@@ -259,16 +347,26 @@ class NativeOverlay(NSObject):
         self.state = OverlayState.RECORDING
         self.start_time = time.time()
 
-        self.icon_label.setStringValue_("🔴")
-        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
-        self.status_label.setStringValue_("Recording")
-        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        # Modern red color (more vibrant)
+        red_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.27, 0.23, 1.0)
+
+        self.icon_label.setStringValue_("🎙")  # Microphone icon instead of red dot
+        self.icon_label.setTextColor_(red_color)
+        self.status_label.setStringValue_("Recording...")
+        self.status_label.setTextColor_(red_color)
         self.detail_label.setStringValue_("00:00")
         self.detail_label.setHidden_(False)
         self.preview_label.setHidden_(True)
+        self.stats_label.setHidden_(True)
 
         self.panel.orderFrontRegardless()
         self.position_panel()
+
+        # Smooth fade-in
+        self.fade_in()
+
+        # Start pulsing animation on icon
+        self.start_pulse_animation()
 
         # Start timer updates
         if self.show_timer:
@@ -307,16 +405,22 @@ class NativeOverlay(NSObject):
 
     def updateTranscribingUI_(self, _):
         """Called on main thread for transcribing update"""
+        # Stop pulse animation from recording
+        self.stop_pulse_animation()
+
         if self.timer:
             self.timer.invalidate()
             self.timer = None
 
         self.state = OverlayState.TRANSCRIBING
 
-        self.icon_label.setStringValue_("⏳")
-        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.8, 0.0, 1.0))
-        self.status_label.setStringValue_("Transcribing")
-        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.8, 0.0, 1.0))
+        # Modern blue color for processing
+        blue_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.25, 0.63, 1.0, 1.0)
+
+        self.icon_label.setStringValue_("✍️")  # Writing icon
+        self.icon_label.setTextColor_(blue_color)
+        self.status_label.setStringValue_("Transcribing...")
+        self.status_label.setTextColor_(blue_color)
 
         if self.start_time:
             elapsed = time.time() - self.start_time
@@ -340,10 +444,13 @@ class NativeOverlay(NSObject):
         """Called on main thread for processing update"""
         self.state = OverlayState.PROCESSING
 
-        self.icon_label.setStringValue_("✨")
-        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.35, 0.34, 0.84, 1.0))
-        self.status_label.setStringValue_("Processing")
-        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.35, 0.34, 0.84, 1.0))
+        # Modern purple color for AI processing
+        purple_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.69, 0.44, 1.0, 1.0)
+
+        self.icon_label.setStringValue_("✨")  # Sparkles for AI magic
+        self.icon_label.setTextColor_(purple_color)
+        self.status_label.setStringValue_("AI Processing...")
+        self.status_label.setTextColor_(purple_color)
         self.detail_label.setStringValue_("Improving grammar...")
 
         self.panel.orderFrontRegardless()
@@ -374,16 +481,19 @@ class NativeOverlay(NSObject):
         """Called on main thread for complete update"""
         self.state = OverlayState.COMPLETE
 
-        self.icon_label.setStringValue_("✓")
-        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.20, 0.78, 0.35, 1.0))
-        self.status_label.setStringValue_("Complete")
-        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.20, 0.78, 0.35, 1.0))
-        self.detail_label.setStringValue_("Text ready!")
+        # Modern green color for success
+        green_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.20, 0.84, 0.29, 1.0)
+
+        self.icon_label.setStringValue_("✓")  # Checkmark
+        self.icon_label.setTextColor_(green_color)
+        self.status_label.setStringValue_("Complete!")
+        self.status_label.setTextColor_(green_color)
+        self.detail_label.setStringValue_("Text ready to paste")
 
         # Show text preview if enabled
         text = getattr(self, '_temp_text', None)
         if self.show_text_preview and text:
-            preview = text[:150] + '...' if len(text) > 150 else text
+            preview = text[:140] + '...' if len(text) > 140 else text
             self.preview_label.setStringValue_(preview)
             self.preview_label.setHidden_(False)
 
@@ -416,25 +526,33 @@ class NativeOverlay(NSObject):
 
     def updateErrorUI_(self, _):
         """Called on main thread for error update"""
+        # Stop animations
+        self.stop_pulse_animation()
+
         if self.timer:
             self.timer.invalidate()
             self.timer = None
 
         self.state = OverlayState.ERROR
 
+        # Bright red for errors
+        error_color = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.27, 0.23, 1.0)
+
         message = getattr(self, '_temp_error_message', 'Error occurred')
-        self.icon_label.setStringValue_("⚠️")
-        self.icon_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        self.icon_label.setStringValue_("⚠️")  # Warning sign
+        self.icon_label.setTextColor_(error_color)
         self.status_label.setStringValue_("Error")
-        self.status_label.setTextColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.23, 0.19, 1.0))
+        self.status_label.setTextColor_(error_color)
         self.detail_label.setStringValue_(message[:50])
         self.preview_label.setHidden_(True)
+        self.stats_label.setHidden_(True)
 
         self.panel.orderFrontRegardless()
         self.position_panel()
 
         # Auto-hide after delay
-        threading.Thread(target=self._auto_hide, args=(self.auto_hide_delay,), daemon=True).start()
+        if self.auto_hide_delay > 0:
+            threading.Thread(target=self._auto_hide, args=(self.auto_hide_delay,), daemon=True).start()
 
     def _auto_hide(self, delay):
         """Auto-hide the overlay after a delay"""
@@ -454,10 +572,29 @@ class NativeOverlay(NSObject):
         """Called on main thread for hide update"""
         self.state = OverlayState.HIDDEN
 
+        # Stop all animations
+        self.stop_pulse_animation()
+
         if self.timer:
             self.timer.invalidate()
             self.timer = None
 
+        if self.panel:
+            # Fade out before hiding
+            self.fade_out()
+            # Order out after fade completes
+            threading.Thread(target=self._delayed_order_out, args=(0.4,), daemon=True).start()
+
+    def _delayed_order_out(self, delay):
+        """Hide panel after fade-out completes"""
+        time.sleep(delay)
+        if self.panel:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "orderOutPanel:", None, False
+            )
+
+    def orderOutPanel_(self, _):
+        """Called on main thread to hide panel"""
         if self.panel:
             self.panel.orderOut_(None)
 
@@ -472,6 +609,9 @@ class NativeOverlay(NSObject):
 
     def destroy(self):
         """Clean up the overlay"""
+        # Stop all animations and timers
+        self.stop_pulse_animation()
+
         if self.timer:
             self.timer.invalidate()
             self.timer = None
