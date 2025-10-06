@@ -58,8 +58,17 @@ class SpeechTranscriber:
             # ALWAYS copy to clipboard first as a safety net (prevents text loss)
             try:
                 self._copy_to_clipboard(formatted_result)
+                print(f"✓ Copied to clipboard: {len(formatted_result)} chars")
+
+                # Debug: Verify clipboard contents
+                verify_process = subprocess.Popen(['pbpaste'], stdout=subprocess.PIPE)
+                verified_text, _ = verify_process.communicate()
+                if verified_text.decode('utf-8') == formatted_result:
+                    print("✓ Clipboard verification passed")
+                else:
+                    print("⚠ Clipboard verification failed - content mismatch")
             except Exception as e:
-                print(f"Warning: Failed to copy to clipboard: {e}")
+                print(f"✗ Failed to copy to clipboard: {e}")
                 overlay.show_error(f"Clipboard error: {str(e)[:50]}")
                 return formatted_result
 
@@ -68,12 +77,12 @@ class SpeechTranscriber:
                 try:
                     self.pykeyboard.type(formatted_result)
                     time.sleep(0.0025)
-                    print("✓ Text typed and saved to clipboard")
+                    print("✓ Text auto-typed and saved to clipboard")
                 except Exception as type_error:
-                    print(f"✗ Typing failed: {type_error}")
-                    print("✓ Text saved to clipboard - paste with Cmd+V")
+                    print(f"✗ Auto-typing failed: {type_error}")
+                    print("✓ Text saved to clipboard - paste manually with Cmd+V")
             else:
-                print("✓ Text copied to clipboard (clipboard mode)")
+                print("✓ Clipboard mode: Text ready to paste with Cmd+V")
 
             # Show completion overlay with text preview and stats
             overlay.show_complete(formatted_result, word_count, char_count)
@@ -221,7 +230,7 @@ class StatusBarApp(rumps.App):
             rumps.MenuItem('Show Text Preview', callback=self.toggle_overlay_text_preview),
         ]
 
-        # Build recent transcripts menu
+        # Build recent transcripts menu (will be updated dynamically)
         recent_transcripts_menu = self._build_recent_transcripts_menu()
 
         menu = [
@@ -229,9 +238,9 @@ class StatusBarApp(rumps.App):
             'Stop Recording',
             None,
             rumps.MenuItem('Show Last Transcript', callback=self.show_last_transcript),
-            ('Recent Transcripts', recent_transcripts_menu) if recent_transcripts_menu else None,
+            ('Recent Transcripts', recent_transcripts_menu if recent_transcripts_menu else [rumps.MenuItem('No history yet', callback=None)]),
             None,
-            rumps.MenuItem('Use Clipboard Mode', callback=self.toggle_clipboard_mode),
+            rumps.MenuItem('Clipboard Mode (Copy Only)', callback=self.toggle_clipboard_mode),
             None,
             ('Tone Preference', tone_menu),
             rumps.MenuItem('Toggle LLM Processing', callback=self.toggle_llm),
@@ -239,9 +248,6 @@ class StatusBarApp(rumps.App):
             ('Overlay Settings', overlay_menu),
             None,
         ]
-
-        # Remove None entries from menu
-        menu = [item for item in menu if item is not None]
 
         if languages is not None:
             for lang in languages:
@@ -383,12 +389,43 @@ class StatusBarApp(rumps.App):
             print(f"Error building transcripts menu: {e}")
             return []
 
+    def _update_recent_transcripts_menu(self):
+        """Update the Recent Transcripts submenu dynamically"""
+        try:
+            # Rebuild the menu items
+            new_menu_items = self._build_recent_transcripts_menu()
+
+            # Clear existing items in the Recent Transcripts submenu
+            recent_menu = self.menu['Recent Transcripts']
+            recent_menu.clear()
+
+            # Add new items
+            if new_menu_items:
+                for item in new_menu_items:
+                    recent_menu.add(item)
+            else:
+                recent_menu.add(rumps.MenuItem('No history yet', callback=None))
+
+            print(f"✓ Updated Recent Transcripts menu ({len(new_menu_items)} items)")
+        except Exception as e:
+            print(f"Error updating transcripts menu: {e}")
+
     def copy_transcript_to_clipboard(self, entry):
         """Copy a transcript from history to clipboard"""
         try:
             text = entry['text']
             process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
             process.communicate(text.encode('utf-8'))
+
+            # Debug: Verify clipboard contents
+            verify_process = subprocess.Popen(['pbpaste'], stdout=subprocess.PIPE)
+            verified_text, _ = verify_process.communicate()
+
+            if verified_text.decode('utf-8') == text:
+                print(f"✓ Clipboard verified: {text[:50]}...")
+            else:
+                print(f"⚠ Clipboard verification failed")
+
             rumps.notification(
                 title="Mac Whisperer",
                 subtitle="Copied to Clipboard",
@@ -396,13 +433,17 @@ class StatusBarApp(rumps.App):
             )
             print(f"Copied transcript to clipboard: {text[:50]}...")
         except Exception as e:
-            print(f"Error copying transcript: {e}")
+            print(f"✗ Error copying transcript: {e}")
 
     def clear_transcript_history(self, _):
         """Clear all transcript history"""
         try:
             history = get_history()
             history.clear()
+
+            # Update menu to reflect cleared history
+            self._update_recent_transcripts_menu()
+
             rumps.notification(
                 title="Mac Whisperer",
                 subtitle="History Cleared",
@@ -493,6 +534,9 @@ class StatusBarApp(rumps.App):
 
         # Stop recording and transcribe (this is blocking)
         self.recorder.stop()
+
+        # Update Recent Transcripts menu with new entry
+        self._update_recent_transcripts_menu()
 
         # Reset to idle icon after transcription completes
         self.title = "⏯"
