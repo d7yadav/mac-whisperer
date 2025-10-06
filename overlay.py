@@ -107,9 +107,9 @@ class NativeOverlay(NSObject):
 
     def create_panel(self):
         """Create the NSPanel overlay window with modern macOS blur effects"""
-        # Panel dimensions (increased for stats)
-        width = 320
-        height = 130
+        # Panel dimensions - compact and sleek
+        width = 280
+        height = 90
 
         # Create borderless, non-activating panel
         style_mask = NSBorderlessWindowMask | NSNonactivatingPanelMask
@@ -151,10 +151,10 @@ class NativeOverlay(NSObject):
             )
             content_view.layer().setCornerRadius_(16.0)  # More rounded
 
-        # Icon label (larger, more prominent)
-        self.icon_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, height - 50, 45, 35))
+        # Icon label - compact size
+        self.icon_label = NSTextField.alloc().initWithFrame_(NSMakeRect(12, height - 38, 30, 24))
         self.icon_label.setStringValue_("")
-        self.icon_label.setFont_(NSFont.systemFontOfSize_(28.0))  # Larger icon
+        self.icon_label.setFont_(NSFont.systemFontOfSize_(20.0))  # Smaller, sleeker
         self.icon_label.setBezeled_(False)
         self.icon_label.setDrawsBackground_(False)
         self.icon_label.setEditable_(False)
@@ -162,10 +162,10 @@ class NativeOverlay(NSObject):
         self.icon_label.setWantsLayer_(True)  # For animations
         content_view.addSubview_(self.icon_label)
 
-        # Status label (better positioning)
-        self.status_label = NSTextField.alloc().initWithFrame_(NSMakeRect(70, height - 42, 230, 22))
+        # Status label - compact positioning
+        self.status_label = NSTextField.alloc().initWithFrame_(NSMakeRect(46, height - 33, 190, 18))
         self.status_label.setStringValue_("")
-        self.status_label.setFont_(NSFont.boldSystemFontOfSize_(float(self.font_size + 1)))  # Slightly larger
+        self.status_label.setFont_(NSFont.boldSystemFontOfSize_(float(self.font_size)))  # Clean size
         self.status_label.setTextColor_(NSColor.whiteColor())
         self.status_label.setBezeled_(False)
         self.status_label.setDrawsBackground_(False)
@@ -173,22 +173,22 @@ class NativeOverlay(NSObject):
         self.status_label.setSelectable_(False)
         content_view.addSubview_(self.status_label)
 
-        # Detail label (timer/info) with better spacing
-        self.detail_label = NSTextField.alloc().initWithFrame_(NSMakeRect(70, height - 62, 230, 16))
+        # Detail label (timer/info) - compact spacing
+        self.detail_label = NSTextField.alloc().initWithFrame_(NSMakeRect(46, height - 50, 190, 14))
         self.detail_label.setStringValue_("")
-        self.detail_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 1)))
-        self.detail_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.7, 1.0))  # Softer gray
+        self.detail_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 3)))
+        self.detail_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.6, 1.0))  # Softer gray
         self.detail_label.setBezeled_(False)
         self.detail_label.setDrawsBackground_(False)
         self.detail_label.setEditable_(False)
         self.detail_label.setSelectable_(False)
         content_view.addSubview_(self.detail_label)
 
-        # Preview label (shown for COMPLETE state)
-        self.preview_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, 25, width - 30, 35))
+        # Preview label - compact (shown for COMPLETE state)
+        self.preview_label = NSTextField.alloc().initWithFrame_(NSMakeRect(10, 18, width - 20, 24))
         self.preview_label.setStringValue_("")
-        self.preview_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 3)))
-        self.preview_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.8, 1.0))
+        self.preview_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 4)))
+        self.preview_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.75, 1.0))
         self.preview_label.setBezeled_(False)
         self.preview_label.setDrawsBackground_(False)
         self.preview_label.setEditable_(False)
@@ -196,11 +196,11 @@ class NativeOverlay(NSObject):
         self.preview_label.setHidden_(True)
         content_view.addSubview_(self.preview_label)
 
-        # Stats label (word/char count)
-        self.stats_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, 8, width - 30, 14))
+        # Stats label - compact (word/char count)
+        self.stats_label = NSTextField.alloc().initWithFrame_(NSMakeRect(10, 5, width - 20, 12))
         self.stats_label.setStringValue_("")
-        self.stats_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 4)))
-        self.stats_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.6, 1.0))
+        self.stats_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 5)))
+        self.stats_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.5, 1.0))
         self.stats_label.setBezeled_(False)
         self.stats_label.setDrawsBackground_(False)
         self.stats_label.setEditable_(False)
@@ -208,28 +208,34 @@ class NativeOverlay(NSObject):
         self.stats_label.setHidden_(True)
         content_view.addSubview_(self.stats_label)
 
-        # Waveform visualization container (for recording state)
-        waveform_height = 40
-        waveform_y = 25
-        self.waveform_container = NSView.alloc().initWithFrame_(NSMakeRect(20, waveform_y, width - 40, waveform_height))
+        # Waveform visualization container - sleeker design
+        waveform_height = 28
+        waveform_y = 12
+        self.waveform_container = NSView.alloc().initWithFrame_(NSMakeRect(12, waveform_y, width - 24, waveform_height))
         self.waveform_container.setHidden_(True)
         self.waveform_container.setWantsLayer_(True)
         content_view.addSubview_(self.waveform_container)
 
-        # Create waveform bars (modern animated visualization)
-        num_bars = 25
-        bar_width = 3
-        bar_spacing = ((width - 40) - (num_bars * bar_width)) / (num_bars - 1)
+        # Create waveform bars - modern sleek design (more bars, thinner)
+        num_bars = 40
+        bar_width = 2.5
+        bar_spacing = ((width - 24) - (num_bars * bar_width)) / (num_bars - 1)
 
         self.waveform_bars = []
         for i in range(num_bars):
             x = i * (bar_width + bar_spacing)
-            bar = NSView.alloc().initWithFrame_(NSMakeRect(x, waveform_height / 2, bar_width, 2))
+            bar = NSView.alloc().initWithFrame_(NSMakeRect(x, waveform_height / 2 - 1, bar_width, 2))
             bar.setWantsLayer_(True)
+
+            # Gradient effect - bars in center are brighter
+            center = num_bars / 2
+            distance_from_center = abs(i - center) / center
+            opacity = 1.0 - (distance_from_center * 0.4)  # 60-100% opacity gradient
+
             bar.layer().setBackgroundColor_(
-                NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.27, 0.23, 0.8).CGColor()
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.27, 0.23, opacity).CGColor()
             )
-            bar.layer().setCornerRadius_(1.5)  # Rounded bars
+            bar.layer().setCornerRadius_(1.25)  # Rounded bars
             self.waveform_container.addSubview_(bar)
             self.waveform_bars.append(bar)
 
@@ -376,17 +382,17 @@ class NativeOverlay(NSObject):
             self.stop_waveform_animation()
             return
 
-        # Simulate audio levels with random heights
-        waveform_container_height = 40
+        # Simulate audio levels with random heights - compact waveform
+        waveform_container_height = 28
         for bar in self.waveform_bars:
-            # Random height between 2 and 35 pixels (simulating audio levels)
-            height = random.uniform(4, 35)
+            # Random height between 2 and 24 pixels (compact, sleeker)
+            height = random.uniform(2, 24)
             frame = bar.frame()
 
             # Center the bar vertically
             y = (waveform_container_height - height) / 2
 
-            # Animate height change
+            # Animate height change with smooth easing
             NSAnimationContext.beginGrouping()
             NSAnimationContext.currentContext().setDuration_(0.08)
             bar.animator().setFrame_(NSMakeRect(frame.origin.x, y, frame.size.width, height))
