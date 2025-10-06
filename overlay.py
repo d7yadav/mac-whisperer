@@ -76,6 +76,8 @@ class NativeOverlay(NSObject):
             self.show_text_preview = self.settings.get('overlay_show_text_preview', True)
             self.auto_hide_delay = self.settings.get('overlay_auto_hide_delay', 3.0)
             self.font_size = self.settings.get('overlay_font_size', 14)
+            self.show_stats = self.settings.get('overlay_show_stats', True)
+            self.stay_on_click = self.settings.get('overlay_stay_on_click', True)
         else:
             # Defaults
             self.enabled = True
@@ -85,12 +87,18 @@ class NativeOverlay(NSObject):
             self.show_text_preview = True
             self.auto_hide_delay = 3.0
             self.font_size = 14
+            self.show_stats = True
+            self.stay_on_click = True
+
+        # Store last transcript for re-showing
+        self.last_transcript = None
+        self.last_transcript_stats = None
 
     def create_panel(self):
         """Create the NSPanel overlay window"""
-        # Panel dimensions
+        # Panel dimensions (increased for stats)
         width = 300
-        height = 100
+        height = 120
 
         # Create borderless, non-activating panel
         style_mask = NSBorderlessWindowMask | NSNonactivatingPanelMask
@@ -152,7 +160,7 @@ class NativeOverlay(NSObject):
         content_view.addSubview_(self.detail_label)
 
         # Preview label (shown for COMPLETE state)
-        self.preview_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, 10, width - 30, 35))
+        self.preview_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, 25, width - 30, 35))
         self.preview_label.setStringValue_("")
         self.preview_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 3)))
         self.preview_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.8, 1.0))
@@ -162,6 +170,18 @@ class NativeOverlay(NSObject):
         self.preview_label.setSelectable_(False)
         self.preview_label.setHidden_(True)
         content_view.addSubview_(self.preview_label)
+
+        # Stats label (word/char count)
+        self.stats_label = NSTextField.alloc().initWithFrame_(NSMakeRect(15, 8, width - 30, 14))
+        self.stats_label.setStringValue_("")
+        self.stats_label.setFont_(NSFont.systemFontOfSize_(float(self.font_size - 4)))
+        self.stats_label.setTextColor_(NSColor.colorWithWhite_alpha_(0.6, 1.0))
+        self.stats_label.setBezeled_(False)
+        self.stats_label.setDrawsBackground_(False)
+        self.stats_label.setEditable_(False)
+        self.stats_label.setSelectable_(False)
+        self.stats_label.setHidden_(True)
+        content_view.addSubview_(self.stats_label)
 
         self.panel.setContentView_(content_view)
         self.position_panel()
@@ -329,13 +349,23 @@ class NativeOverlay(NSObject):
         self.panel.orderFrontRegardless()
         self.position_panel()
 
-    def show_complete(self, text=None):
-        """Show completion state with optional text preview"""
+    def show_complete(self, text=None, word_count=None, char_count=None):
+        """Show completion state with optional text preview and stats"""
         if not self._ensure_panel_created():
             return
 
-        # Store text for main thread update
+        # Store text and stats for main thread update
         self._temp_text = text
+        self._temp_word_count = word_count if word_count is not None else (len(text.split()) if text else 0)
+        self._temp_char_count = char_count if char_count is not None else (len(text) if text else 0)
+
+        # Store last transcript for re-showing
+        self.last_transcript = text
+        self.last_transcript_stats = {
+            'word_count': self._temp_word_count,
+            'char_count': self._temp_char_count
+        }
+
         self.performSelectorOnMainThread_withObject_waitUntilDone_(
             "updateCompleteUI:", None, False
         )
@@ -357,11 +387,21 @@ class NativeOverlay(NSObject):
             self.preview_label.setStringValue_(preview)
             self.preview_label.setHidden_(False)
 
+        # Show stats if enabled
+        if self.show_stats:
+            word_count = getattr(self, '_temp_word_count', 0)
+            char_count = getattr(self, '_temp_char_count', 0)
+            self.stats_label.setStringValue_(f"{word_count} words • {char_count} chars")
+            self.stats_label.setHidden_(False)
+        else:
+            self.stats_label.setHidden_(True)
+
         self.panel.orderFrontRegardless()
         self.position_panel()
 
-        # Auto-hide after delay
-        threading.Thread(target=self._auto_hide, args=(self.auto_hide_delay,), daemon=True).start()
+        # Auto-hide after delay (if delay > 0)
+        if self.auto_hide_delay > 0:
+            threading.Thread(target=self._auto_hide, args=(self.auto_hide_delay,), daemon=True).start()
 
     def show_error(self, message='Error occurred'):
         """Show error state"""
@@ -421,6 +461,15 @@ class NativeOverlay(NSObject):
         if self.panel:
             self.panel.orderOut_(None)
 
+    def show_last_transcript(self):
+        """Re-show the last transcript"""
+        if self.last_transcript:
+            word_count = self.last_transcript_stats.get('word_count', 0) if self.last_transcript_stats else 0
+            char_count = self.last_transcript_stats.get('char_count', 0) if self.last_transcript_stats else 0
+            self.show_complete(self.last_transcript, word_count, char_count)
+            return True
+        return False
+
     def destroy(self):
         """Clean up the overlay"""
         if self.timer:
@@ -466,11 +515,11 @@ def show_processing():
         overlay.show_processing()
 
 
-def show_complete(text=None):
+def show_complete(text=None, word_count=None, char_count=None):
     """Show completion state"""
     overlay = get_overlay()
     if overlay:
-        overlay.show_complete(text)
+        overlay.show_complete(text, word_count, char_count)
 
 
 def show_error(message='Error occurred'):
@@ -485,3 +534,11 @@ def hide_overlay():
     overlay = get_overlay()
     if overlay:
         overlay.hide()
+
+
+def show_last_transcript():
+    """Re-show the last transcript"""
+    overlay = get_overlay()
+    if overlay:
+        return overlay.show_last_transcript()
+    return False

@@ -31,11 +31,14 @@ class SettingsManager:
             # Overlay settings
             'overlay_enabled': True,  # Enable visual overlay
             'overlay_position': 'bottom-right',  # 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'
-            'overlay_opacity': 0.95,
+            'overlay_opacity': 0.95,  # 0.7 - 1.0
             'overlay_show_timer': True,
             'overlay_show_text_preview': True,
-            'overlay_auto_hide_delay': 3.0,
-            'overlay_font_size': 14,
+            'overlay_auto_hide_delay': 3.0,  # seconds, 0 = never auto-hide
+            'overlay_font_size': 14,  # 10-20
+            'overlay_stay_on_click': True,  # Keep overlay when clicked
+            'overlay_show_copy_button': True,  # Show copy button on completion
+            'overlay_show_stats': True,  # Show word/char count
             # Notification feedback (works on macOS)
             'use_audio_feedback': True,  # Play sounds for start/stop
             'use_menu_bar_feedback': True  # Update menu bar icon with status

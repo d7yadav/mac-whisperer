@@ -11,6 +11,7 @@ import subprocess
 from whispercpp import Whisper
 from text_processor import process_text
 from settings_manager import SettingsManager, get_app_context
+from transcript_history import get_history
 import overlay
 
 class SpeechTranscriber:
@@ -42,6 +43,18 @@ class SpeechTranscriber:
             # Process text with LLM for better formatting (with app context)
             formatted_result = process_text(raw_result, use_llm=use_llm, context=app_context)
 
+            # Calculate stats
+            word_count = len(formatted_result.split())
+            char_count = len(formatted_result)
+
+            # Save to history
+            try:
+                history = get_history()
+                app_name = app_context.get('app_name') if app_context else None
+                history.add(formatted_result, app_name)
+            except Exception as e:
+                print(f"Warning: Failed to save to history: {e}")
+
             # ALWAYS copy to clipboard first as a safety net (prevents text loss)
             try:
                 self._copy_to_clipboard(formatted_result)
@@ -62,8 +75,8 @@ class SpeechTranscriber:
             else:
                 print("✓ Text copied to clipboard (clipboard mode)")
 
-            # Show completion overlay with text preview
-            overlay.show_complete(formatted_result)
+            # Show completion overlay with text preview and stats
+            overlay.show_complete(formatted_result, word_count, char_count)
 
             return formatted_result
 
@@ -208,9 +221,15 @@ class StatusBarApp(rumps.App):
             rumps.MenuItem('Show Text Preview', callback=self.toggle_overlay_text_preview),
         ]
 
+        # Build recent transcripts menu
+        recent_transcripts_menu = self._build_recent_transcripts_menu()
+
         menu = [
             'Start Recording',
             'Stop Recording',
+            None,
+            rumps.MenuItem('Show Last Transcript', callback=self.show_last_transcript),
+            ('Recent Transcripts', recent_transcripts_menu) if recent_transcripts_menu else None,
             None,
             rumps.MenuItem('Use Clipboard Mode', callback=self.toggle_clipboard_mode),
             None,
@@ -220,6 +239,9 @@ class StatusBarApp(rumps.App):
             ('Overlay Settings', overlay_menu),
             None,
         ]
+
+        # Remove None entries from menu
+        menu = [item for item in menu if item is not None]
 
         if languages is not None:
             for lang in languages:
@@ -324,6 +346,71 @@ class StatusBarApp(rumps.App):
         overlay_instance = overlay.get_overlay(self.settings)
         overlay_instance.show_text_preview = new_value
         print(f"Overlay text preview: {'Shown' if new_value else 'Hidden'}")
+
+    def show_last_transcript(self, _):
+        """Show the last transcript in overlay"""
+        success = overlay.show_last_transcript()
+        if not success:
+            rumps.notification(
+                title="Mac Whisperer",
+                subtitle="No Recent Transcript",
+                message="No transcripts available yet. Record something first!"
+            )
+        print("Showing last transcript" if success else "No transcript to show")
+
+    def _build_recent_transcripts_menu(self):
+        """Build the recent transcripts submenu"""
+        try:
+            history = get_history()
+            recent = history.get_recent(10)
+
+            if not recent:
+                return []
+
+            menu_items = []
+            for entry in recent:
+                preview = history.format_preview(entry, max_length=40)
+                menu_items.append(
+                    rumps.MenuItem(preview, callback=lambda sender, e=entry: self.copy_transcript_to_clipboard(e))
+                )
+
+            # Add separator and "Clear History"
+            menu_items.append(None)
+            menu_items.append(rumps.MenuItem('Clear History', callback=self.clear_transcript_history))
+
+            return menu_items
+        except Exception as e:
+            print(f"Error building transcripts menu: {e}")
+            return []
+
+    def copy_transcript_to_clipboard(self, entry):
+        """Copy a transcript from history to clipboard"""
+        try:
+            text = entry['text']
+            process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            process.communicate(text.encode('utf-8'))
+            rumps.notification(
+                title="Mac Whisperer",
+                subtitle="Copied to Clipboard",
+                message=f"{len(text.split())} words copied"
+            )
+            print(f"Copied transcript to clipboard: {text[:50]}...")
+        except Exception as e:
+            print(f"Error copying transcript: {e}")
+
+    def clear_transcript_history(self, _):
+        """Clear all transcript history"""
+        try:
+            history = get_history()
+            history.clear()
+            rumps.notification(
+                title="Mac Whisperer",
+                subtitle="History Cleared",
+                message="All transcript history has been cleared"
+            )
+            print("Transcript history cleared")
+        except Exception as e:
+            print(f"Error clearing history: {e}")
 
     def set_overlay_position(self, position, sender):
         """Set overlay position"""
