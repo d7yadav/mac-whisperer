@@ -22,7 +22,8 @@ class OverlayState(Enum):
 class ModernOverlay:
     """
     A modern, semi-transparent overlay that provides visual feedback
-    during speech-to-text operations
+    during speech-to-text operations.
+    Runs in a separate thread to avoid conflicts with rumps event loop.
     """
 
     def __init__(self, settings=None):
@@ -32,12 +33,23 @@ class ModernOverlay:
         self.start_time = None
         self.timer_thread = None
         self.stop_timer = False
+        self.tk_thread = None
+        self.ready = False
 
         # Load settings
         self._load_settings()
 
-        # Initialize window in main thread
-        self._init_window()
+        # Start Tkinter in a separate thread
+        if self.enabled:
+            self.tk_thread = threading.Thread(target=self._run_tk_loop, daemon=True)
+            self.tk_thread.start()
+
+            # Wait for window to be ready
+            max_wait = 50  # 5 seconds max
+            wait_count = 0
+            while not self.ready and wait_count < max_wait:
+                time.sleep(0.1)
+                wait_count += 1
 
     def _load_settings(self):
         """Load overlay settings from settings manager"""
@@ -59,8 +71,15 @@ class ModernOverlay:
             self.auto_hide_delay = 3.0
             self.font_size = 14
 
+    def _run_tk_loop(self):
+        """Run Tkinter mainloop in separate thread"""
+        self._init_window()
+        if self.window:
+            self.ready = True
+            self.window.mainloop()
+
     def _init_window(self):
-        """Initialize the overlay window"""
+        """Initialize the overlay window (runs in Tk thread)"""
         if not self.enabled:
             return
 
@@ -180,120 +199,137 @@ class ModernOverlay:
         self.window.geometry(f'+{x}+{y}')
 
     def show_recording(self):
-        """Show recording state"""
-        if not self.enabled or not self.window:
+        """Show recording state (thread-safe)"""
+        if not self.enabled or not self.window or not self.ready:
             return
 
-        self.state = OverlayState.RECORDING
-        self.start_time = time.time()
+        def _update_ui():
+            self.state = OverlayState.RECORDING
+            self.start_time = time.time()
 
-        self.icon_label.config(text='🔴', fg='#ff3b30')
-        self.status_label.config(text='Recording', fg='#ff3b30')
-        self.detail_label.config(text='00:00')
-        self.preview_label.pack_forget()
+            self.icon_label.config(text='🔴', fg='#ff3b30')
+            self.status_label.config(text='Recording', fg='#ff3b30')
+            self.detail_label.config(text='00:00')
+            self.preview_label.pack_forget()
 
-        self.window.deiconify()
-        self._position_window()
+            self.window.deiconify()
+            self._position_window()
 
-        # Start timer thread
-        if self.show_timer:
-            self.stop_timer = False
-            self.timer_thread = threading.Thread(target=self._update_timer, daemon=True)
-            self.timer_thread.start()
+            # Start timer thread
+            if self.show_timer:
+                self.stop_timer = False
+                self.timer_thread = threading.Thread(target=self._update_timer, daemon=True)
+                self.timer_thread.start()
+
+        self.window.after(0, _update_ui)
 
     def _update_timer(self):
-        """Update the timer display during recording"""
+        """Update the timer display during recording (runs in background thread)"""
         while not self.stop_timer and self.state == OverlayState.RECORDING:
             elapsed = time.time() - self.start_time
             minutes = int(elapsed // 60)
             seconds = int(elapsed % 60)
+            time_text = f'{minutes:02d}:{seconds:02d}'
 
             try:
-                self.detail_label.config(text=f'{minutes:02d}:{seconds:02d}')
+                # Schedule UI update on Tkinter thread
+                self.window.after(0, lambda txt=time_text: self.detail_label.config(text=txt))
             except:
                 break
 
             time.sleep(0.1)
 
     def show_transcribing(self):
-        """Show transcribing state"""
-        if not self.enabled or not self.window:
+        """Show transcribing state (thread-safe)"""
+        if not self.enabled or not self.window or not self.ready:
             return
 
-        self.state = OverlayState.TRANSCRIBING
-        self.stop_timer = True
+        def _update_ui():
+            self.state = OverlayState.TRANSCRIBING
+            self.stop_timer = True
 
-        self.icon_label.config(text='⏳', fg='#ffcc00')
-        self.status_label.config(text='Transcribing', fg='#ffcc00')
+            self.icon_label.config(text='⏳', fg='#ffcc00')
+            self.status_label.config(text='Transcribing', fg='#ffcc00')
 
-        if self.start_time:
-            elapsed = time.time() - self.start_time
-            self.detail_label.config(text=f'Recorded {elapsed:.1f}s')
-        else:
-            self.detail_label.config(text='Processing audio...')
+            if self.start_time:
+                elapsed = time.time() - self.start_time
+                self.detail_label.config(text=f'Recorded {elapsed:.1f}s')
+            else:
+                self.detail_label.config(text='Processing audio...')
 
-        self._position_window()
+            self._position_window()
+
+        self.window.after(0, _update_ui)
 
     def show_processing(self):
-        """Show processing state (LLM formatting)"""
-        if not self.enabled or not self.window:
+        """Show processing state - LLM formatting (thread-safe)"""
+        if not self.enabled or not self.window or not self.ready:
             return
 
-        self.state = OverlayState.PROCESSING
+        def _update_ui():
+            self.state = OverlayState.PROCESSING
 
-        self.icon_label.config(text='✨', fg='#5856d6')
-        self.status_label.config(text='Processing', fg='#5856d6')
-        self.detail_label.config(text='Improving grammar...')
+            self.icon_label.config(text='✨', fg='#5856d6')
+            self.status_label.config(text='Processing', fg='#5856d6')
+            self.detail_label.config(text='Improving grammar...')
 
-        self._position_window()
+            self._position_window()
+
+        self.window.after(0, _update_ui)
 
     def show_complete(self, text=None):
-        """Show completion state with optional text preview"""
-        if not self.enabled or not self.window:
+        """Show completion state with optional text preview (thread-safe)"""
+        if not self.enabled or not self.window or not self.ready:
             return
 
-        self.state = OverlayState.COMPLETE
+        def _update_ui():
+            self.state = OverlayState.COMPLETE
 
-        self.icon_label.config(text='✓', fg='#34c759')
-        self.status_label.config(text='Complete', fg='#34c759')
-        self.detail_label.config(text='Text ready!')
+            self.icon_label.config(text='✓', fg='#34c759')
+            self.status_label.config(text='Complete', fg='#34c759')
+            self.detail_label.config(text='Text ready!')
 
-        # Show text preview if enabled and text provided
-        if self.show_text_preview and text:
-            preview = text[:150] + '...' if len(text) > 150 else text
-            self.preview_label.config(text=preview)
-            self.preview_label.pack(pady=(10, 0))
+            # Show text preview if enabled and text provided
+            if self.show_text_preview and text:
+                preview = text[:150] + '...' if len(text) > 150 else text
+                self.preview_label.config(text=preview)
+                self.preview_label.pack(pady=(10, 0))
 
-        self._position_window()
+            self._position_window()
 
-        # Auto-hide after delay
-        threading.Thread(
-            target=self._auto_hide,
-            args=(self.auto_hide_delay,),
-            daemon=True
-        ).start()
+            # Auto-hide after delay
+            threading.Thread(
+                target=self._auto_hide,
+                args=(self.auto_hide_delay,),
+                daemon=True
+            ).start()
+
+        self.window.after(0, _update_ui)
 
     def show_error(self, message='Error occurred'):
-        """Show error state"""
-        if not self.enabled or not self.window:
+        """Show error state (thread-safe)"""
+        if not self.enabled or not self.window or not self.ready:
             return
 
-        self.state = OverlayState.ERROR
-        self.stop_timer = True
+        def _update_ui():
+            self.state = OverlayState.ERROR
+            self.stop_timer = True
 
-        self.icon_label.config(text='⚠️', fg='#ff3b30')
-        self.status_label.config(text='Error', fg='#ff3b30')
-        self.detail_label.config(text=message)
-        self.preview_label.pack_forget()
+            self.icon_label.config(text='⚠️', fg='#ff3b30')
+            self.status_label.config(text='Error', fg='#ff3b30')
+            self.detail_label.config(text=message)
+            self.preview_label.pack_forget()
 
-        self._position_window()
+            self._position_window()
 
-        # Auto-hide after delay
-        threading.Thread(
-            target=self._auto_hide,
-            args=(self.auto_hide_delay,),
-            daemon=True
-        ).start()
+            # Auto-hide after delay
+            threading.Thread(
+                target=self._auto_hide,
+                args=(self.auto_hide_delay,),
+                daemon=True
+            ).start()
+
+        self.window.after(0, _update_ui)
 
     def _auto_hide(self, delay):
         """Auto-hide the overlay after a delay"""
@@ -301,17 +337,20 @@ class ModernOverlay:
         self.hide()
 
     def hide(self):
-        """Hide the overlay"""
-        if not self.window:
+        """Hide the overlay (thread-safe)"""
+        if not self.window or not self.ready:
             return
 
-        self.state = OverlayState.HIDDEN
-        self.stop_timer = True
+        def _update_ui():
+            self.state = OverlayState.HIDDEN
+            self.stop_timer = True
 
-        try:
-            self.window.withdraw()
-        except:
-            pass
+            try:
+                self.window.withdraw()
+            except:
+                pass
+
+        self.window.after(0, _update_ui)
 
     def destroy(self):
         """Clean up the overlay"""
@@ -321,11 +360,6 @@ class ModernOverlay:
                 self.window.destroy()
             except:
                 pass
-
-    def run_mainloop(self):
-        """Run the Tkinter main loop (call from main thread)"""
-        if self.window:
-            self.window.mainloop()
 
 
 # Global overlay instance
