@@ -5,7 +5,74 @@ Adds smart punctuation, capitalization, and removes filler words
 import requests
 import json
 import re
+from difflib import SequenceMatcher
 from settings_manager import SettingsManager
+
+
+def calculate_similarity(text1, text2):
+    """
+    Calculate similarity between two texts using multiple metrics
+    Returns a score between 0 and 1 (1 = identical, 0 = completely different)
+    """
+    # Normalize both texts for comparison (lowercase, remove extra spaces)
+    norm1 = ' '.join(text1.lower().split())
+    norm2 = ' '.join(text2.lower().split())
+
+    # Use SequenceMatcher for character-level similarity
+    char_similarity = SequenceMatcher(None, norm1, norm2).ratio()
+
+    # Word-level overlap (important words preserved)
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+
+    # Remove common filler words that shouldn't affect similarity
+    fillers = {'um', 'uh', 'like', 'you', 'know', 'basically', 'actually', 'literally', 'yeah', 'okay', 'so', 'well'}
+    words1 = words1 - fillers
+    words2 = words2 - fillers
+
+    if not words1 or not words2:
+        return char_similarity
+
+    # Jaccard similarity (word overlap)
+    intersection = len(words1 & words2)
+    union = len(words1 | words2)
+    word_similarity = intersection / union if union > 0 else 0
+
+    # Weighted average (favor word similarity for meaning preservation)
+    combined_similarity = (char_similarity * 0.3) + (word_similarity * 0.7)
+
+    return combined_similarity
+
+
+def validate_llm_output(original, corrected, min_similarity=0.65):
+    """
+    Validate that LLM output preserves the original meaning
+
+    Args:
+        original: Original transcribed text
+        corrected: LLM-corrected text
+        min_similarity: Minimum required similarity (default 0.65 = 65%)
+
+    Returns:
+        tuple: (is_valid, similarity_score, reason)
+    """
+    # Calculate similarity
+    similarity = calculate_similarity(original, corrected)
+
+    # Check if output is suspiciously longer (possible hallucination)
+    length_ratio = len(corrected) / len(original) if len(original) > 0 else 1
+    if length_ratio > 1.8:
+        return False, similarity, f"Output too long ({length_ratio:.1f}x original)"
+
+    # Check if output is suspiciously shorter (possible truncation)
+    if length_ratio < 0.5:
+        return False, similarity, f"Output too short ({length_ratio:.1f}x original)"
+
+    # Check similarity threshold
+    if similarity < min_similarity:
+        return False, similarity, f"Similarity too low ({similarity:.2f} < {min_similarity})"
+
+    return True, similarity, "Valid"
 
 
 def process_with_llm(text, context=None):
@@ -23,12 +90,16 @@ def process_with_llm(text, context=None):
     tone = context.get('tone', 'neutral and professional') if context else 'neutral and professional'
     app_name = context.get('app_name', 'Unknown') if context else 'Unknown'
 
-    # Conservative prompt focusing on grammar correction while preserving original meaning
-    prompt = f"""You are an expert text editing assistant that corrects speech-to-text errors while strictly preserving the original meaning and intent.
+    # Ultra-conservative prompt based on OpenAI Whisper best practices
+    # Reference: https://cookbook.openai.com/examples/whisper_processing_guide
+    prompt = f"""You are a text post-processor for speech-to-text output. Your ONLY job is to add punctuation and fix obvious errors.
 
 Context: User is dictating in {app_name}. Use a tone that is {tone}.
 
-Your task: CORRECT grammatical errors and clean up the transcribed speech while maintaining the exact meaning by:
+CRITICAL INSTRUCTION - OpenAI Whisper Best Practice:
+"Preserve the original words and only insert necessary punctuation such as periods, commas, capitalization, symbols like dollar signs or percentage signs, and formatting."
+
+Your task - MINIMAL CHANGES ONLY:
 
 1. **Grammar Correction**: Fix grammatical errors while keeping the original sentence structure:
    - Subject-verb agreement (e.g., "he go" → "he goes")
@@ -92,11 +163,15 @@ Input: "{text}"
 Output:"""
 
     try:
-        # Get Ollama API URL from settings
+        # Get settings
         settings = SettingsManager()
         api_url = settings.get('ollama_api_url', 'http://localhost:11434/api/generate')
+        temperature = settings.get('llm_temperature', 0.0)
+        similarity_threshold = settings.get('llm_similarity_threshold', 0.65)
+        validation_enabled = settings.get('llm_validation_enabled', True)
 
-        # Call Ollama API with better model
+        # Call Ollama API with optimal parameters for grammar correction
+        # Based on OpenAI research: temperature 0 for deterministic, factual outputs
         response = requests.post(
             api_url,
             json={
@@ -104,10 +179,10 @@ Output:"""
                 'prompt': prompt,
                 'stream': False,
                 'options': {
-                    'temperature': 0.1,  # Very low for minimal creative changes, preserves original text
-                    'top_p': 0.8,  # Lower for more deterministic output
-                    'top_k': 30,  # Lower to reduce variation
-                    'repeat_penalty': 1.05,  # Lower to avoid over-correcting
+                    'temperature': temperature,  # Configurable via settings (default 0.0)
+                    'top_p': 0.75,  # Lower for most likely outputs only
+                    'top_k': 20,  # Very low to minimize variation
+                    'repeat_penalty': 1.0,  # No penalty to avoid over-correcting
                 }
             },
             timeout=30  # 30 second timeout
@@ -133,10 +208,20 @@ Output:"""
             formatted_text = re.sub(r'\s+', ' ', formatted_text)  # Remove extra spaces
             formatted_text = formatted_text.strip()
 
-            # Validate output - if LLM added explanation, fall back to basic
-            if len(formatted_text) > len(text) * 2:  # Output suspiciously longer
-                print("LLM output too long, using basic cleanup")
-                return basic_cleanup(text)
+            # Validate output using similarity check (if enabled)
+            if validation_enabled:
+                is_valid, similarity, reason = validate_llm_output(text, formatted_text, min_similarity=similarity_threshold)
+
+                if not is_valid:
+                    print(f"⚠ LLM output rejected: {reason} (similarity: {similarity:.2%})")
+                    print(f"  Original: {text[:100]}...")
+                    print(f"  LLM output: {formatted_text[:100]}...")
+                    print("  → Using basic cleanup instead")
+                    return basic_cleanup(text)
+
+                print(f"✓ LLM output validated (similarity: {similarity:.2%}, threshold: {similarity_threshold:.2%})")
+            else:
+                print("ℹ LLM validation disabled")
 
             return formatted_text if formatted_text else text
         else:

@@ -28,6 +28,10 @@ class SettingsManager:
             'tone_preference': 'auto',  # 'auto', 'casual', 'professional', 'technical'
             'max_recording_time': 600,
             'ollama_api_url': 'http://localhost:11434/api/generate',  # Ollama API endpoint
+            # LLM parameter controls (based on OpenAI Whisper best practices)
+            'llm_temperature': 0.0,  # 0.0 = deterministic, 0.25 = slight variation
+            'llm_similarity_threshold': 0.65,  # Minimum similarity (0.0-1.0) to accept LLM output
+            'llm_validation_enabled': True,  # Enable similarity-based validation
             # Overlay settings
             'overlay_enabled': True,  # Enable visual overlay
             'overlay_position': 'bottom-right',  # 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'
